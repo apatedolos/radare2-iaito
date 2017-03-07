@@ -17,6 +17,8 @@
 | **Coverity** 	| [![Build Status](https://scan.coverity.com/projects/416/badge.svg)](https://scan.coverity.com/projects/416) |
 # Introduction
 
+This is the radare2 fork used for <b>Iaitō</b> development. It is periodically updated from the main radare2 repository and helps Iaitō developers use the same radare2 code for the GUI development.
+
 r2 is a rewrite from scratch of radare in order to provide
 a set of libraries and tools to work with binary files.
 
