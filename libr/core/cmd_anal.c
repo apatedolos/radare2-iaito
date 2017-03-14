@@ -560,6 +560,7 @@ static void core_anal_bytes(RCore *core, const ut8 *buf, int len, int nops, int 
 	int ret, i, j, idx, size;
 	const char *color = "";
 	const char *esilstr;
+	const char *opexstr;
 	RAnalHint *hint;
 	RAnalEsil *esil = NULL;
 	RAsmOp asmop;
@@ -592,6 +593,12 @@ static void core_anal_bytes(RCore *core, const ut8 *buf, int len, int nops, int 
 		ret = r_asm_disassemble (core->assembler, &asmop, buf + idx, len - idx);
 		ret = r_anal_op (core->anal, &op, core->offset + idx, buf + idx, len - idx);
 		esilstr = R_STRBUF_SAFEGET (&op.esil);
+		opexstr = R_STRBUF_SAFEGET (&op.opex);
+		char *mnem = strdup (asmop.buf_asm);
+		char *sp = strchr (mnem, ' ');
+		if (sp) {
+			*sp = 0;
+		}
 		if (ret < 1 && fmt != 'd') {
 			eprintf ("Oops at 0x%08" PFMT64x " (", core->offset + idx);
 			for (i = idx, j = 0; i < core->blocksize && j < 3; ++i, ++j) {
@@ -632,14 +639,18 @@ static void core_anal_bytes(RCore *core, const ut8 *buf, int len, int nops, int 
 				r_anal_esil_stack_free (esil);
 			}
 		} else if (fmt == 'j') {
-			r_cons_printf ("{\"opcode\": \"%s\",", asmop.buf_asm);
+			r_cons_printf ("{\"opcode\":\"%s\",", asmop.buf_asm);
+			r_cons_printf ("\"mnemonic\":\"%s\",", mnem);
 			if (hint && hint->opcode) {
-				r_cons_printf ("\"ophint\": \"%s\",", hint->opcode);
+				r_cons_printf ("\"ophint\":\"%s\",", hint->opcode);
 			}
-			r_cons_printf ("\"prefix\": %" PFMT64d ",", op.prefix);
-			r_cons_printf ("\"id\": %d,", op.id);
-			r_cons_printf ("\"addr\": %" PFMT64d ",", core->offset + idx);
-			r_cons_printf ("\"bytes\": \"");
+			r_cons_printf ("\"prefix\":%" PFMT64d ",", op.prefix);
+			r_cons_printf ("\"id\":%d,", op.id);
+			if (opexstr && *opexstr) {
+				r_cons_printf ("\"opex\":%s,", opexstr);
+			}
+			r_cons_printf ("\"addr\":%" PFMT64d ",", core->offset + idx);
+			r_cons_printf ("\"bytes\":\"");
 			for (j = 0; j < size; j++) {
 				r_cons_printf ("%02x", buf[j + idx]);
 			}
@@ -708,6 +719,7 @@ static void core_anal_bytes(RCore *core, const ut8 *buf, int len, int nops, int 
 	}
 			printline ("address", "0x%" PFMT64x "\n", core->offset + idx);
 			printline ("opcode", "%s\n", asmop.buf_asm);
+			printline ("mnemonic", "%s\n", mnem);
 			if (hint) {
 				if (hint->opcode) {
 					printline ("ophint", "%s\n", hint->opcode);
@@ -721,6 +733,12 @@ static void core_anal_bytes(RCore *core, const ut8 *buf, int len, int nops, int 
 			}
 			printline ("prefix", "%" PFMT64d "\n", op.prefix);
 			printline ("id", "%d\n", op.id);
+#if 0
+// no opex here to avoid lot of tests broken..and having json in here is not much useful imho
+			if (opexstr && *opexstr) {
+				printline ("opex", "%s\n", opexstr);
+			}
+#endif
 			printline ("bytes", NULL, 0);
 			for (j = 0; j < size; j++) {
 				r_cons_printf ("%02x", buf[j + idx]);
@@ -774,6 +792,7 @@ static void core_anal_bytes(RCore *core, const ut8 *buf, int len, int nops, int 
 		}
 		//r_cons_printf ("false: 0x%08"PFMT64x"\n", core->offset+idx);
 		//free (hint);
+		free (mnem);
 		r_anal_hint_free (hint);
 		if (((idx + ret) < len) && (!nops || (i + 1) < nops) && fmt != 'e' && fmt != 'r') {
 			r_cons_print (",");
@@ -1605,7 +1624,7 @@ static int cmd_anal_fcn(RCore *core, const char *input) {
 		RAnalFunction *fcn = r_anal_get_fcn_in (core->anal, core->offset, -1);
 		if (fcn) {
 			fcn->maxstack = r_num_math (core->num, input + 3);
-			fcn->stack = fcn->maxstack;
+			//fcn->stack = fcn->maxstack;
 		}
 		}
 		break;
@@ -3966,6 +3985,9 @@ static bool cmd_anal_refs(RCore *core, const char *input) {
 				char *comment;
 				bool asm_varsub = r_config_get_i (core->config, "asm.varsub");
 				core->parser->relsub = r_config_get_i (core->config, "asm.relsub");
+				if (core->parser->relsub) {
+					core->parser->relsub_addr = addr;
+				}
 				r_list_foreach (list, iter, ref) {
 					r_core_read_at (core, ref->addr, buf, size);
 					r_asm_set_pc (core->assembler, ref->addr);
@@ -4929,12 +4951,31 @@ static void rowlog_done(RCore *core) {
 
 static int compute_coverage(RCore *core) {
 	RListIter *iter;
+	RListIter *iter2;
 	RAnalFunction *fcn;
+	RIOSection *sec;
 	int cov = 0;
 	r_list_foreach (core->anal->fcns, iter, fcn) {
-		cov += r_anal_fcn_realsize (fcn);
+		r_list_foreach (core->io->sections, iter2, sec) {
+			int section_end = sec->vaddr + sec->vsize;
+			if (sec->rwx & 1 && fcn->addr >= sec->vaddr && fcn->addr < section_end) {
+				cov += r_anal_fcn_realsize (fcn);
+			}
+		}
 	}
 	return cov;
+}
+
+static int compute_code (RCore* core) {
+	int code = 0;
+	RListIter *iter;
+	RIOSection *sec;
+	r_list_foreach (core->io->sections, iter, sec) {
+		if (sec->rwx & 1) {
+			code += sec->vsize;
+		}
+	}
+	return code;
 }
 
 static int compute_calls(RCore *core) {
@@ -4952,7 +4993,7 @@ static void r_core_anal_info (RCore *core, const char *input) {
 	int strs = r_flag_count (core->flags, "str.*");
 	int syms = r_flag_count (core->flags, "sym.*");
 	int imps = r_flag_count (core->flags, "sym.imp.*");
-	int code = r_num_get (core->num, "$SS");
+	int code = compute_code (core);
 	int covr = compute_coverage (core);
 	int call = compute_calls (core);
 	int xrfs = r_anal_xrefs_count (core->anal);
@@ -5333,13 +5374,15 @@ static bool anal_fcn_data_gaps (RCore *core, const char *input) {
 
 static void r_anal_virtual_functions(void *core, const char* input) {
 	const char *curArch = NULL;
+	const char *curClass = NULL;
 	if (core) {
 		RCore *c = (RCore*)core;
 		if (c->bin && c->bin->cur && c->bin->cur->o && c->bin->cur->o->info) {
 			curArch = c->bin->cur->o->info->arch;
+			curClass = c->bin->cur->o->info->rclass;
 		}
 	}
-	if (curArch && !strcmp (curArch, "x86")) {
+	if (curArch && !strcmp (curArch, "x86") && !strcmp (curClass, "elf")) {
 		const char * help_msg[] = {
 			"Usage:", "av[*j] ", "analyze the .rodata section and list virtual function present",
 			NULL};
@@ -5349,6 +5392,9 @@ static void r_anal_virtual_functions(void *core, const char* input) {
 			break;
 		case 'j': //avj
 			r_core_anal_list_vtables (core, true);
+			break;
+		case 'r': //avr
+			r_core_anal_print_rtti (core);
 			break;
 		case '\0': //av
 			r_core_anal_list_vtables (core, false);

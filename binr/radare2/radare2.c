@@ -81,7 +81,6 @@ static ut64 getBaddrFromDebugger(RCore *r, const char *file) {
 	RListIter *iter;
 	RDebugMap *map;
 	if (!r || !r->io || !r->io->desc) {
-		eprintf ("INValid fd\n");
 		return 0LL;
 	}
 #if __WINDOWS__
@@ -277,17 +276,30 @@ static int rabin_delegate(RThread *th) {
 #endif
 
 static void radare2_rc(RCore *r) {
+	char* env_debug = r_sys_getenv ("R_DEBUG");
+	bool has_debug = false;
+	if (env_debug) {
+		has_debug = true;
+		free (env_debug);
+	}
+
 	char *homerc = r_str_home (".radare2rc");
-	if (homerc) {
+	if (homerc && r_file_is_regular (homerc)) {
+		if (has_debug) {
+			eprintf ("USER CONFIG loaded from %s\n", homerc);
+		}
 		r_core_cmd_file (r, homerc);
 		free (homerc);
 	}
-	homerc = r_str_home ("/.config/radare2/radare2rc");
-	if (homerc) {
+	homerc = r_str_home (".config/radare2/radare2rc");
+	if (homerc && r_file_is_regular (homerc)) {
+		if (has_debug) {
+			eprintf ("USER CONFIG loaded from %s\n", homerc);
+		}
 		r_core_cmd_file (r, homerc);
 		free (homerc);
 	}
-	homerc = r_str_home ("/.config/radare2/radare2rc.d");
+	homerc = r_str_home (".config/radare2/radare2rc.d");
 	if (homerc) {
 		if (r_file_is_directory (homerc)) {
 			char *file;
@@ -297,6 +309,9 @@ static void radare2_rc(RCore *r) {
 				if (*file != '.') {
 					char *path = r_str_newf ("%s/%s", homerc, file);
 					if (r_file_is_regular (path)) {
+						if (has_debug) {
+							eprintf ("USER CONFIG loaded from %s\n", homerc);
+						}
 						r_core_cmd_file (r, path);
 					}
 					free (path);
@@ -564,7 +579,8 @@ int main(int argc, char **argv, char **envp) {
 			do_list_io_plugins = true;
 			break;
 		case 'm':
-			mapaddr = r_num_math (r.num, optarg); break;
+			mapaddr = r_num_math (r.num, optarg);
+			r_config_set_i (r.config, "file.offset", mapaddr);
 			break;
 		case 'M':
 			r_config_set (r.config, "bin.demangle", "false");
@@ -572,6 +588,7 @@ int main(int argc, char **argv, char **envp) {
 			break;
 		case 'n':
 			run_anal--;
+			r_config_set (r.config, "file.info", "false");
 			break;
 		case 'N':
 			run_rc = 0;
@@ -935,7 +952,9 @@ int main(int argc, char **argv, char **envp) {
 				va = 2;
 			}
 			if (run_anal > 0) {
-				eprintf ("USING 0x%" PFMT64x "\n", baddr);
+				if (baddr && baddr != UT64_MAX) {
+					eprintf ("Using 0x%" PFMT64x "\n", baddr);
+				}
 				if (r_core_bin_load (&r, pfile, baddr)) {
 					RBinObject *obj = r_bin_get_object (r.bin);
 					if (obj && obj->info) {

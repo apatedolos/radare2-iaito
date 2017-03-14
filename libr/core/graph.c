@@ -29,10 +29,11 @@ static const char *mousemodes[] = {
 #define DEFAULT_SPEED 1
 #define PAGEKEY_SPEED (h / 2)
 /* 15 */
-#define SMALLNODE_TEXT_CUR "<@@@@@@>"
-#define SMALLNODE_MIN_WIDTH 8
-#define SMALLNODE_TITLE_LEN 4
-#define SMALLNODE_CENTER_X 3
+#define MINIGRAPH_NODE_TEXT_CUR "<@@@@@@>"
+#define MINIGRAPH_NODE_MIN_WIDTH 8
+#define MINIGRAPH_NODE_TITLE_LEN 4
+#define MINIGRAPH_NODE_CENTER_X 3
+#define MININODE_MIN_WIDTH 16
 
 #define ZOOM_STEP 10
 #define ZOOM_DEFAULT 100
@@ -123,7 +124,7 @@ static const char *mode2str(const RAGraph *g, const char *prefix) {
 	const char *submode;
 
 	if (is_mini (g)) {
-		submode = "SMALL";
+		submode = "MINI";
 	} else if (is_offset (g)) {
 		submode = "OFF";
 	} else if (is_summary (g)) {
@@ -153,16 +154,19 @@ static char *get_title(ut64 addr) {
 
 static int agraph_refresh(struct agraph_refresh_data *grd);
 
-static void update_node_dimension(const RGraph *g, int is_small, int zoom) {
+static void update_node_dimension(const RGraph *g, int is_mini, int zoom) {
 	const RList *nodes = r_graph_get_nodes (g);
 	RGraphNode *gn;
 	RListIter *it;
 	RANode *n;
 
 	graph_foreach_anode (nodes, it, gn, n) {
-		if (is_small) {
+		if (is_mini) {
 			n->h = 1;
-			n->w = SMALLNODE_MIN_WIDTH;
+			n->w = MINIGRAPH_NODE_MIN_WIDTH;
+		} else if (n->is_mini) {
+			n->h = 1;
+			n->w = MININODE_MIN_WIDTH;
 		} else {
 			unsigned int len;
 			n->w = r_str_bounds (n->body, (int *) &n->h);
@@ -183,71 +187,49 @@ static void update_node_dimension(const RGraph *g, int is_small, int zoom) {
 	}
 }
 
-static void small_RANode_print(const RAGraph *g, const RANode *n, int cur) {
+static void mini_RANode_print(const RAGraph *g, const RANode *n,
+								int cur, bool print_details) {
 	char title[TITLE_LEN];
 	int x, delta_x = 0;
 
-	if (!G (n->x + SMALLNODE_CENTER_X, n->y) &&
-	!G (n->x + SMALLNODE_CENTER_X + n->w, n->y)) {
+	if (!G (n->x + MINIGRAPH_NODE_CENTER_X, n->y) &&
+	!G (n->x + MINIGRAPH_NODE_CENTER_X + n->w, n->y)) {
 		return;
 	}
 
-	x = n->x + SMALLNODE_CENTER_X + g->can->sx;
+	x = n->x + MINIGRAPH_NODE_CENTER_X + g->can->sx;
 	if (x < 0) {
 		delta_x = -x;
 	}
-	G (n->x + SMALLNODE_CENTER_X + delta_x, n->y);
+	if (!G (n->x + MINIGRAPH_NODE_CENTER_X + delta_x, n->y)) {
+		return;
+	}
 
-	if (cur) {
-		W (&SMALLNODE_TEXT_CUR[delta_x]);
-		(void) G (-g->can->sx, -g->can->sy + 2);
-		snprintf (title, sizeof (title) - 1,
-			"%s:", n->title);
-		W (title);
-		(void) G (-g->can->sx, -g->can->sy + 3);
-		W (n->body);
-	} else {
-		char *str = "____";
-		if (n->title) {
-			int l = strlen (n->title);
+	if (print_details) {
+		if (cur) {
+			W (&MINIGRAPH_NODE_TEXT_CUR[delta_x]);
+			(void) G (-g->can->sx, -g->can->sy + 2);
+			snprintf (title, sizeof (title) - 1,
+				"[ %s ]", n->title);
+			W (title);
+			(void) G (-g->can->sx, -g->can->sy + 3);
+			W (n->body);
+		} else {
+			char *str = "____";
+			if (n->title) {
+				int l = strlen (n->title);
 
-			str = n->title;
-			if (l > SMALLNODE_TITLE_LEN) {
-				str += l - SMALLNODE_TITLE_LEN;
+				str = n->title;
+				if (l > MINIGRAPH_NODE_TITLE_LEN) {
+					str += l - MINIGRAPH_NODE_TITLE_LEN;
+				}
 			}
+			snprintf (title, sizeof (title) - 1, "__%s__", str);
+			W (title + delta_x);
 		}
-		snprintf (title, sizeof (title) - 1, "[_%s_]", str);
-		W (title + delta_x);
-	}
-	return;
-}
-
-static void mini_RANode_print(const RAGraph *g, const RANode *n, int cur) {
-	char title[TITLE_LEN];
-	int x, delta_x = 0;
-
-	if (!G (n->x + SMALLNODE_CENTER_X, n->y) &&
-	!G (n->x + SMALLNODE_CENTER_X + n->w, n->y)) {
-		return;
-	}
-
-	x = n->x + SMALLNODE_CENTER_X + g->can->sx;
-	if (x < 0) {
-		delta_x = -x;
-	}
-	if (!G (n->x + SMALLNODE_CENTER_X + delta_x, n->y)) {
-		return;
-	}
-
-	if (cur) {
-		W (&SMALLNODE_TEXT_CUR[delta_x]);
-		snprintf (title, sizeof (title) - 1,
-			"[ %s ]", n->title);
-		W (title);
 	} else {
-		W (&SMALLNODE_TEXT_CUR[delta_x]);
 		snprintf (title, sizeof (title) - 1,
-			"  %s  ", n->title);
+			cur ? "[ %s ]" : "  %s  ", n->title);
 		W (title);
 	}
 	return;
@@ -1511,8 +1493,13 @@ static void create_edge_from_dummies(const RAGraph *g, RANode *an, RList *toremo
 	RGraphNode *from = r_list_get_n (r_graph_innodes (g->graph, n), 0);
 	RANode *a_from = get_anode (from);
 	RListIter *(*add_to_list)(RList *, void *) = NULL;
-	AEdge *e = R_NEW0 (AEdge);
-	if (!e || !a_from) {
+	AEdge *e;
+	if (!a_from) {
+		return;
+	}
+
+	e = R_NEW0 (AEdge);
+	if (!e) {
 		return;
 	}
 	e->x = r_list_new ();
@@ -2270,30 +2257,10 @@ static void agraph_update_seek(RAGraph *g, RANode *n, int force) {
 
 static void agraph_print_node(const RAGraph *g, RANode *n) {
 	const int cur = g->curnode && get_anode (g->curnode) == n;
-	if (is_mini (g)) {
-		small_RANode_print (g, n, cur);
+	if (is_mini (g) || n->is_mini) {
+		mini_RANode_print (g, n, cur, is_mini (g));
 	} else {
-		if (n->mini) {
-			n->w = strlen (n->title) + 4;
-			n->h = 1;
-#if 1
-			mini_RANode_print (g, n, cur);
-#else
-			small_RANode_print (g, n, cur);
-#endif
-		} else {
-			if (n->h < 4) {
-				int titlen = strlen (n->title);
-				n->w = r_str_bounds (n->body, (int *) &n->h);
-				if (titlen > n->w) {
-					n->w = titlen + 6;
-				} else {
-					n->w += 4;
-				}
-				n->h += 3;
-			}
-			normal_RANode_print (g, n, cur);
-		}
+		normal_RANode_print (g, n, cur);
 	}
 }
 
@@ -2495,7 +2462,8 @@ static void agraph_merge_child(RAGraph *g, int idx) {
 
 static void agraph_toggle_mini(RAGraph *g) {
 	RANode *n = get_anode (g->curnode);
-	n->mini = !n->mini;
+	n->is_mini = !n->is_mini;
+	g->need_update_dim = 1;
 	agraph_refresh (r_cons_singleton ()->event_data);
 	agraph_set_layout ((RAGraph *) g, r_cons_singleton ()->is_interactive);
 }

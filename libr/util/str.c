@@ -1399,6 +1399,23 @@ R_API int r_str_is_printable(const char *str) {
 	return 1;
 }
 
+R_API bool r_str_is_printable_incl_newlines(const char *str) {
+	while (*str) {
+		int ulen = r_utf8_decode ((const ut8*)str, strlen (str), NULL);
+		if (ulen > 1) {
+			str += ulen;
+			continue;
+		}
+		if (!IS_PRINTABLE (*str)) {
+			if (*str != '\r' && *str != '\n' && *str != '\t') {
+				return false;
+			}
+		}
+		str++;
+	}
+	return true;
+}
+
 // Length in chars of a wide string (find better name?)
 R_API int r_wstr_clen (const char *s) {
 	int len = 0;
@@ -1906,7 +1923,7 @@ R_API char *r_str_uri_encode (const char *s) {
 			*d++ = *s;
 		} else {
 			*d++ = '%';
-			sprintf (ch, "%02x", 0xff & ((ut8)*s));
+			snprintf (ch, sizeof (ch), "%02x", 0xff & ((ut8)*s));
 			*d++ = ch[0];
 			*d++ = ch[1];
 		}
@@ -2015,10 +2032,10 @@ R_API char *r_str_utf16_decode (const ut8 *s, int len) {
 		return NULL;
 	}
 	for (i = 0; i < len && j < lenresult && (s[i] || s[i+1]); i += 2) {
-		if (!s[i+1] && 0x20 <= s[i] && s[i] <= 0x7E) {
+		if (!s[i+1] && IS_PRINTABLE(s[i])) {
 			result[j++] = s[i];
 		} else {
-			j += sprintf (&result[j], "\\u%.2hhx%.2hhx", s[i], s[i+1]);
+			j += snprintf (&result[j], lenresult - j, "\\u%.2"HHXFMT"%.2"HHXFMT"", s[i], s[i+1]);
 		}
 	}
 	return result;
@@ -2049,7 +2066,7 @@ R_API char *r_str_utf16_encode (const char *s, int len) {
 			*d++ = 'u';
 			*d++ = '0';
 			*d++ = '0';
-			sprintf (ch, "%02x", 0xff & ((ut8)*s));
+			snprintf (ch, sizeof (ch), "%02x", 0xff & ((ut8)*s));
 			*d++ = ch[0];
 			*d++ = ch[1];
 		}

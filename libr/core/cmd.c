@@ -1399,6 +1399,8 @@ static int r_core_cmd_subst_i(RCore *core, char *cmd, char *colon) {
 	int i, ret = 0, pipefd;
 	bool usemyblock = false;
 	int scr_html = -1;
+	bool eos = false;
+	bool haveQuote = false;
 
 	if (!cmd) {
 		return 0;
@@ -1413,46 +1415,74 @@ static int r_core_cmd_subst_i(RCore *core, char *cmd, char *colon) {
 		}
 		break;
 	case '"':
-		for (cmd++; *cmd; ) {
+		for (; *cmd; ) {
 			int pipefd = -1;
 			ut64 oseek = UT64_MAX;
-			char *line, *p = find_eoq (cmd);
-			if (!p || !*p) {
-				eprintf ("Missing \" in (%s).", cmd);
-				return false;
+			char *line, *p;
+			haveQuote = *cmd == '"';
+			if (haveQuote) {
+			//	*cmd = 0;
+				cmd++;
+				p = find_eoq (cmd + 1);
+				if (!p || !*p) {
+					eprintf ("Missing \" in (%s).", cmd);
+					return false;
+				}
+				*p++ = 0;
+				if (!*p) {
+					eos = true;
+				}
+			} else {
+				char *sc = strchr (cmd, ';');
+				if (sc) {
+					*sc = 0;
+				}
+				r_core_cmd0 (core, cmd);
+				if (!sc) {
+					break;
+				}
+				cmd = sc + 1;
+				continue;
 			}
-			*p = 0;
-			// SKIPSPACES in p + 1
-			while (IS_WHITESPACE (p[1])) p++;
-			if (p[1] == '@' || (p[1] && p[2] == '@')) {
-				char *q = strchr (p + 1, '"');
-				if (q) {
-					*q = 0;
+			if (p[0]) {
+				// workaround :D
+				if (p[0] == '@') {
+					p--;
 				}
-				oseek = core->offset;
-				r_core_seek (core,
-					     r_num_math (core->num, p + 2), 1);
-				if (q) {
-					*p = '"';
-					p = q;
-				} else {
-					p = NULL;
+				while (p[1] == ';' || IS_WHITESPACE (p[1])) {
+					p++;
 				}
-			}
-			if (p && *p && p[1] == '>') {
-				str = p + 2;
-				while (*str == '>') {
-					str++;
+				if (p[1] == '@' || (p[1] && p[2] == '@')) {
+					char *q = strchr (p + 1, '"');
+					if (q) {
+						*q = 0;
+					}
+					haveQuote = q != NULL;
+					oseek = core->offset;
+					r_core_seek (core,
+						     r_num_math (core->num, p + 2), 1);
+					if (q) {
+						*p = '"';
+						p = q;
+					} else {
+						p = strchr (p + 1, ';');
+					}
 				}
-				while (IS_WHITESPACE (*str)) {
-					str++;
+				if (p && *p && p[1] == '>') {
+					str = p + 2;
+					while (*str == '>') {
+						str++;
+					}
+					while (IS_WHITESPACE (*str)) {
+						str++;
+					}
+					r_cons_flush ();
+					pipefd = r_cons_pipe_open (str, 1, p[2] == '>');
 				}
-				r_cons_flush ();
-				pipefd = r_cons_pipe_open (str, 1, p[2] == '>');
 			}
 			line = strdup (cmd);
 			line = r_str_replace (line, "\\\"", "\"", true);
-			if (p && p[1] == '|') {
+			if (p && *p && p[1] == '|') {
 				str = p + 2;
 				while (IS_WHITESPACE (*str)) {
 					str++;
@@ -1473,8 +1503,23 @@ static int r_core_cmd_subst_i(RCore *core, char *cmd, char *colon) {
 			if (!p) {
 				break;
 			}
-			*p = '"';
-			cmd = p + 1;
+			if (eos) {
+				break;
+			}
+			if (haveQuote) {
+				if (*p == ';') {
+					cmd = p + 1;
+				} else {
+					if (*p == '"') {
+						cmd = p + 1;
+					} else {
+						*p = '"';
+						cmd = p;
+					}
+				}
+			} else {
+				cmd = p + 1;
+			}
 		}
 		return true;
 	case '(':
@@ -2094,6 +2139,7 @@ R_API int r_core_cmd_foreach3(RCore *core, const char *cmd, char *each) {
 	RDebug *dbg = core->dbg;
 	RList *list, *head;
 	RListIter *iter;
+	RFlagItem *flg;
 	int i;
 
 	switch (each[0]) {
@@ -2116,14 +2162,14 @@ R_API int r_core_cmd_foreach3(RCore *core, const char *cmd, char *each) {
 		}
 		break;
 	case '?':
-		r_cons_printf ("Usage: @@@ [type]     # types:\n");
-		r_cons_printf (" symbols\n");
-		r_cons_printf (" imports\n");
-		r_cons_printf (" regs\n");
-		r_cons_printf (" threads\n");
-		r_cons_printf (" comments\n");
-		r_cons_printf (" functions\n");
-		r_cons_printf (" flags\n");
+		r_cons_printf ("Usage: @@@ [type]     # types:\n"
+			" symbols\n"
+			" imports\n"
+			" regs\n"
+			" threads\n"
+			" comments\n"
+			" functions\n"
+			" flags\n");
 		break;
 	case 'c':
 		switch (each[1]) {
@@ -2155,14 +2201,17 @@ R_API int r_core_cmd_foreach3(RCore *core, const char *cmd, char *each) {
 		// registers
 		{
 			ut64 offorig = core->offset;
-			for (i=0; i < 128; i++) {
+			for (i = 0; i < 128; i++) {
 				RRegItem *item;
 				ut64 value;
 				head = r_reg_get_list (dbg->reg, i);
-				if (!head) continue;
+				if (!head) {
+					continue;
+				}
 				r_list_foreach (head, iter, item) {
-					if (item->size != core->anal->bits)
+					if (item->size != core->anal->bits) {
 						continue;
+					}
 					value = r_reg_get_value (dbg->reg, item);
 					r_core_seek (core, value, 1);
 					r_cons_printf ("%s: ", item->name);
@@ -2174,17 +2223,19 @@ R_API int r_core_cmd_foreach3(RCore *core, const char *cmd, char *each) {
 		break;
 	case 'i':
 		// imports
-		if (0) {
+		{
 			RBinImport *imp;
 			ut64 offorig = core->offset;
 			list = r_bin_get_imports (core->bin);
 			r_list_foreach (list, iter, imp) {
-				r_core_seek (core, 0, 1);
-				r_core_cmd0 (core, cmd);
+				char *impflag = r_str_newf ("sym.imp.%s", imp->name);
+				ut64 addr = r_num_math (core->num, impflag);
+				if (addr && addr != UT64_MAX) {
+					r_core_seek (core, addr, 1);
+					r_core_cmd0 (core, cmd);
+				}
 			}
 			r_core_seek (core, offorig, 1);
-		} else {
-			eprintf ("TODO @@@ imports ^^\n");
 		}
 		break;
 	case 's':
@@ -2203,7 +2254,10 @@ R_API int r_core_cmd_foreach3(RCore *core, const char *cmd, char *each) {
 	case 'f':
 		switch (each[1]) {
 		case 'l': // flags
-			eprintf ("TODO @@@ flags ^^\n");
+			r_list_foreach (core->flags->flags, iter, flg) {
+				r_core_seek (core, flg->offset, 1);
+				r_core_cmd0 (core, cmd);
+			}
 			break;
 		case 'u': // functions
 			{
@@ -2267,6 +2321,15 @@ R_API int r_core_cmd_foreach(RCore *core, const char *cmd, char *each) {
 	ostr = str = strdup (each);
 	r_cons_break_push (NULL, NULL); //pop on return
 	switch (each[0]) {
+	case '/': // "@@/"
+		{
+		char *cmdhit = strdup (r_config_get (core->config, "cmd.hit"));
+		r_config_set (core->config, "cmd.hit", cmd);
+		r_core_cmd0 (core, each);
+		r_config_set (core->config, "cmd.hit", cmdhit);
+		free (cmdhit);
+		}
+		return 0;
 	case '?':
 		helpCmdForeach (core);
 		break;

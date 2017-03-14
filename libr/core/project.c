@@ -79,7 +79,7 @@ static bool r_core_is_project(RCore *core, const char *name) {
 		if (!path) {
 			return false;
 		}
-		if (r_str_endswith (path, "/rc") && r_file_exists (path)) {
+		if (r_str_endswith (path, R_SYS_DIR "rc") && r_file_exists (path)) {
 			ret = true;
 		} else {
 			path = r_str_concat (path, ".d");
@@ -201,15 +201,15 @@ static bool projectLoadRop(RCore *core, const char *prjfile) {
 	char *rcPath = projectScriptPath (core, prjfile);
 	char *prjDir = r_file_dirname (rcPath);
 
-	if (r_str_endswith (prjfile, "/rc")) {
+	if (r_str_endswith (prjfile, R_SYS_DIR "rc")) {
 		// XXX
 		eprintf ("ENDS WITH\n");
 		path = strdup (prjfile);
 		path [strlen (path) - 3] = 0;
-	} else if (r_file_fexists ("%s/rc", prjDir, prjfile)) {
-		path = r_str_newf ("%s/", prjDir, prjfile);
+	} else if (r_file_fexists ("%s" R_SYS_DIR "rc", prjDir, prjfile)) {
+		path = r_str_newf ("%s" R_SYS_DIR, prjDir, prjfile);
 	} else {
-		if (*prjfile == '/') {
+		if (*prjfile == R_SYS_DIR[0]) {
 			db = r_str_newf ("%s.d", prjfile);
 			if (!db) {
 				free (prjDir);
@@ -218,7 +218,7 @@ static bool projectLoadRop(RCore *core, const char *prjfile) {
 			}
 			path = strdup (db);
 		} else {
-			db = r_str_newf ("%s/%s.d", prjDir, prjfile);
+			db = r_str_newf ("%s" R_SYS_DIR "%s.d", prjDir, prjfile);
 			if (!db) {
 				free (prjDir);
 				free (rcPath);
@@ -339,7 +339,9 @@ R_API RThread *r_core_project_load_bg(RCore *core, const char *prjName, const ch
 R_API int r_core_project_open(RCore *core, const char *prjfile, bool thready) {
 	int askuser = 1;
 	int ret, close_current_session = 1;
-	char *prj, *filepath;
+	char *prj, *filepath, *oldbin;
+	const char *newbin;
+	ut64 mapaddr = 0;
 	if (!prjfile || !*prjfile) {
 		return false;
 	}
@@ -365,6 +367,7 @@ R_API int r_core_project_open(RCore *core, const char *prjfile, bool thready) {
 			return false;
 		}
 	}
+	oldbin = strdup (r_config_get (core->config, "file.path"));
 	if (!strcmp (prjfile, r_config_get (core->config, "prj.name"))) {
 		//eprintf ("Reloading project\n");
 		askuser = 0;
@@ -390,16 +393,15 @@ R_API int r_core_project_open(RCore *core, const char *prjfile, bool thready) {
 		// open new file
 		// TODO: handle read/read-write mode
 		// TODO: handle mapaddr (io.maps are not saved in projects yet)
+		r_io_desc_init (core->io);
 		fh = r_core_file_open (core, filepath, 0, 0);
 		if (!fh) {
 			eprintf ("Cannot open file '%s'\n", filepath);
+			free (oldbin);
 			free (filepath);
 			free (prj);
 			return false;
 		}
-		// TODO: handle load bin info or not
-		// TODO: handle base address
-		r_core_bin_load (core, filepath, UT64_MAX);
 	}
 	if (thready) {
 		(void)r_core_project_load_bg (core, prjfile, prj);
@@ -408,6 +410,20 @@ R_API int r_core_project_open(RCore *core, const char *prjfile, bool thready) {
 		/* load sdb stuff in here */
 		ret = r_core_project_load (core, prjfile, prj);
 	}
+
+	if (close_current_session && r_config_get_i (core->config, "file.info")) {
+		mapaddr = r_config_get_i (core->config, "file.offset");
+		if (mapaddr) {
+			r_core_bin_load (core, filepath, mapaddr);
+		} else {
+			r_core_bin_load (core, filepath, UT64_MAX);
+		}
+	}
+	newbin = r_config_get (core->config, "file.path");
+	if (strcmp (oldbin, newbin)) {
+		eprintf ("WARNING: file.path changed: %s => %s\n", oldbin, newbin);
+	}
+	free (oldbin);
 	free (filepath);
 	free (prj);
 	return ret;
@@ -586,7 +602,7 @@ R_API bool r_core_project_save(RCore *core, const char *prjName) {
 		eprintf ("Invalid project name '%s'\n", prjName);
 		return false;
 	}
-	if (r_str_endswith (scriptPath, "/rc")) {
+	if (r_str_endswith (scriptPath, R_SYS_DIR "rc")) {
 		/* new project format */
 		prjDir = r_file_dirname (scriptPath);
 	} else {
@@ -602,7 +618,7 @@ R_API bool r_core_project_save(RCore *core, const char *prjName) {
 			r_file_rm (scriptPath);
 			r_sys_mkdirp (prjDir);
 			eprintf ("Please remove: rm -rf %s %s.d\n", prjName, prjName);
-			char *rc = r_str_newf ("%s/rc", prjDir);
+			char *rc = r_str_newf ("%s" R_SYS_DIR "rc", prjDir);
 			if (!rc) {
 				free (prjDir);
 				free (scriptPath);
@@ -648,8 +664,8 @@ R_API bool r_core_project_save(RCore *core, const char *prjName) {
 		eprintf ("TODO: prj.files: support copying more than one file into the project directory\n");
 		char *binFile = r_core_project_info (core, prjName);
 		const char *binFileName = r_file_basename (binFile);
-		char *prjBinDir = r_str_newf ("%s/bin", prjDir);
-		char *prjBinFile = r_str_newf ("%s/%s", prjBinDir, binFileName);
+		char *prjBinDir = r_str_newf ("%s" R_SYS_DIR "bin", prjDir);
+		char *prjBinFile = r_str_newf ("%s" R_SYS_DIR "%s", prjBinDir, binFileName);
 		r_sys_mkdirp (prjBinDir);
 		if (!r_file_copy (binFile, prjBinFile)) {
 			eprintf ("Warning: Cannot copy '%s' into '%s'\n", binFile, prjBinFile);
@@ -660,7 +676,7 @@ R_API bool r_core_project_save(RCore *core, const char *prjName) {
 	}
 	if (r_config_get_i (core->config, "prj.git")) {
 		char *cwd = r_sys_getdir ();
-		char *gitDir = r_str_newf ("%s/.git", prjDir);
+		char *gitDir = r_str_newf ("%s" R_SYS_DIR ".git", prjDir);
 		if (r_sys_chdir (prjDir)) {
 			if (!r_file_is_directory (gitDir)) {
 				r_sys_cmd ("git init");
@@ -717,14 +733,14 @@ static bool projectLoadXrefs(RCore *core, const char *prjName) {
 	}
 	const char *prjdir = r_config_get (core->config, "dir.projects");
 
-	if (prjName[0] == '/') {
+	if (prjName[0] == R_SYS_DIR[0]) {
 		db = r_str_newf ("%s", prjName);
 		if (!db) {
 			return false;
 		}
 		path = strdup (db);
 	} else {
-		db = r_str_newf ("%s/%s", prjdir, prjName);
+		db = r_str_newf ("%s" R_SYS_DIR "%s", prjdir, prjName);
 		if (!db) {
 			return false;
 		}
@@ -742,7 +758,7 @@ static bool projectLoadXrefs(RCore *core, const char *prjName) {
 	if (!sdb_ns_unset (core->anal->sdb, NULL, DB)) {
 		sdb_free (DB);
 	}
-	const char *xrefs_path = r_file_fexists ("%s/xrefs.sdb", path)
+	const char *xrefs_path = r_file_fexists ("%s" R_SYS_DIR "xrefs.sdb", path)
 		? "xrefs.sdb": "xrefs";
 	DB = sdb_new (path, xrefs_path, 0);
 	if (!DB) {

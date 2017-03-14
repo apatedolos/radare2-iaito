@@ -1911,7 +1911,7 @@ R_API int r_core_config_init(RCore *core) {
 	/* prj */
 	SETPREF("prj.name", "", "Name of current project");
 	SETPREF("prj.files", "false", "Save the target binary inside the project directory");
-	SETPREF("prj.git", "false", "Every project is a git repo and saving is commiting");
+	SETPREF("prj.git", "false", "Every project is a git repo and saving is committing");
 	SETPREF("prj.zip", "false", "Use ZIP format for project files");
 	SETPREF("prj.gpg", "false", "TODO: Encrypt project with GnuPGv2");
 
@@ -2258,6 +2258,8 @@ R_API int r_core_config_init(RCore *core) {
 	/* file */
 	SETPREF("file.desc", "", "User defined file description (used by projects)");
 	SETPREF("file.md5", "", "MD5 sum of current file");
+	SETPREF("file.info", "true", "RBin info loaded");
+	SETPREF("file.offset", "", "Offset where the file will be mapped at");
 	SETPREF("file.path", "", "Path of current file");
 	SETPREF("file.sha1", "", "SHA1 hash of current file");
 	SETPREF("file.type", "", "Type of current file");

@@ -6,9 +6,6 @@
 #include <r_bin.h>
 #include "pe/pe.h"
 
-static int check(RBinFile *arch);
-static int check_bytes(const ut8 *buf, ut64 length);
-
 static Sdb* get_sdb (RBinObject *o) {
 	struct PE_(r_bin_pe_obj_t) *bin;
 	if (!o || !o->bin_obj) {
@@ -439,13 +436,15 @@ static int haschr(const RBinFile* arch, ut16 dllCharacteristic) {
 }
 
 static RBinInfo* info(RBinFile *arch) {
+	struct PE_ (r_bin_pe_obj_t) *bin;
 	SDebugInfo di = {{0}};
 	RBinInfo *ret = R_NEW0 (RBinInfo);
 	ut32 claimed_checksum, actual_checksum, pe_overlay;
 
 	if (!ret) {
 		return NULL;
-	}	
+	}
+	bin = arch->o->bin_obj;
 	arch->file = strdup (arch->file);
 	ret->bclass = PE_(r_bin_pe_get_class) (arch->o->bin_obj);
 	ret->rclass = strdup ("pe");
@@ -476,6 +475,7 @@ static RBinInfo* info(RBinFile *arch) {
 	ret->claimed_checksum = strdup (sdb_fmt (0, "0x%08x", claimed_checksum));
 	ret->actual_checksum  = strdup (sdb_fmt (1, "0x%08x", actual_checksum));
 	ret->pe_overlay = pe_overlay > 0;
+	ret->signature = bin ? bin->is_signed : false;
 
 	sdb_bool_set (arch->sdb, "pe.canary", has_canary(arch), 0);
 	sdb_bool_set (arch->sdb, "pe.highva", haschr(arch, IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA), 0);
@@ -525,14 +525,7 @@ static ut64 get_vaddr (RBinFile *arch, ut64 baddr, ut64 paddr, ut64 vaddr) {
 }
 
 #if !R_BIN_PE64
-static int check(RBinFile *arch) {
-	const ut8 *bytes = arch ? r_buf_buffer (arch->buf) : NULL;
-	ut64 sz = arch ? r_buf_size (arch->buf): 0;
-	return check_bytes (bytes, sz);
-
-}
-
-static int check_bytes(const ut8 *buf, ut64 length) {
+static bool check_bytes(const ut8 *buf, ut64 length) {
 	unsigned int idx;
 	if (!buf) {
 		return false;
@@ -549,6 +542,13 @@ static int check_bytes(const ut8 *buf, ut64 length) {
 		}
 	}
 	return false;
+}
+
+static bool check(RBinFile *arch) {
+	const ut8 *bytes = arch ? r_buf_buffer (arch->buf) : NULL;
+	ut64 sz = arch ? r_buf_size (arch->buf): 0;
+	return check_bytes (bytes, sz);
+
 }
 
 /* inspired in http://www.phreedom.org/solar/code/tinype/tiny.97/tiny.asm */
@@ -631,7 +631,7 @@ static char *signature (RBinFile *arch) {
 		return NULL;
 	}
 	bin = arch->o->bin_obj;
-	return (char *) bin->pkcs7;
+	return (char *) bin->signature_dump;
 }
 
 static RBinField *newField(const char *name, ut64 addr) {

@@ -539,7 +539,7 @@ static int save_ptr(void *p, const char *k, const char *v) {
 	sdbs[1] = ((Sdb**) p)[1];
 	if (!strncmp (v, "cc", strlen ("cc") + 1)) {
 		const char *x = sdb_const_get (sdbs[1], sdb_fmt (-1, "cc.%s.name", k), 0);
-		char *tmp = sdb_fmt (-1, "0x%08"PFMT64x, (ut64)x);
+		char *tmp = sdb_fmt (-1, "%p", x);
 		sdb_set (sdbs[0], tmp, x, 0);
 	}
 	return 1;
@@ -570,7 +570,7 @@ R_API void r_core_anal_cc_init(RCore *core) {
 	RListIter *it;
 	RAnalFunction *fcn;
 	r_list_foreach (core->anal->fcns, it, fcn) {
-		char *ptr = sdb_fmt (-1, "0x%08"PFMT64x, (ut64)fcn->cc);
+		char *ptr = sdb_fmt (-1, "%p", fcn->cc);
 		const char *cc = sdb_const_get (sdbs[0], ptr, 0);
 		if (cc) {
 			fcn->cc = r_anal_cc_to_constant (core->anal, (char *)cc);
@@ -722,6 +722,8 @@ static int bin_info(RCore *r, int mode) {
 		}
 		if (info->rclass && !strcmp (info->rclass, "pe")) {
 			pair_bool ("overlay", info->pe_overlay, mode, false);
+			//this should be moved if added to mach0 (or others)
+			pair_bool ("signed", info->signature, mode, false);
 		}
 
 		for (i = 0; info->sum[i].type; i++) {
@@ -1200,9 +1202,6 @@ static int bin_relocs(RCore *r, int mode, int va) {
 	relocs = r_bin_patch_relocs (r->bin);
 	if (!relocs) {
 		relocs = r_bin_get_relocs (r->bin);
-		if (!relocs) {
-			return false;
-		}
 	}
 
 	if (IS_MODE_RAD (mode)) {
@@ -1314,7 +1313,7 @@ static int bin_relocs(RCore *r, int mode, int va) {
 	if (IS_MODE_NORMAL (mode)) {
 		r_cons_printf ("\n%i relocations\n", i);
 	}
-	return true;
+	return relocs != NULL;
 }
 
 #define MYDB 1
@@ -1728,6 +1727,9 @@ static int bin_symbols_internal(RCore *r, int mode, ut64 laddr, int va, ut64 at,
 			const char *name = sn.demname? sn.demname: symbol->name;
 			r_cons_printf ("0x%08"PFMT64x" %d %s\n",
 				addr, (int)symbol->size, name);
+		} else if (IS_MODE_SIMPLEST (mode)) {
+			const char *name = sn.demname? sn.demname: symbol->name;
+			r_cons_printf ("%s\n", name);
 		} else if (IS_MODE_RAD (mode)) {
 			RBinFile *binfile;
 			RBinPlugin *plugin;
@@ -1952,12 +1954,12 @@ static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const c
 				//r_io_section_set_archbits (r->io, addr, arch, bits);
 			}
 			if (r->bin->prefix) {
-				snprintf (str, sizeof (str)-1, "[%i] va=0x%08"PFMT64x" pa=0x%08"
+				snprintf (str, sizeof (str)-1, "section %i va=0x%08"PFMT64x" pa=0x%08"
 					PFMT64x" sz=%" PFMT64d" vsz=%"PFMT64d" rwx=%s %s.%s",
 					i, addr, section->paddr, section->size, section->vsize,
 					perms, r->bin->prefix, section->name);
 			} else {
-				snprintf (str, sizeof (str)-1, "[%i] va=0x%08"PFMT64x" pa=0x%08"
+				snprintf (str, sizeof (str)-1, "section %i va=0x%08"PFMT64x" pa=0x%08"
 					PFMT64x" sz=%" PFMT64d" vsz=%"PFMT64d" rwx=%s %s",
 					i, addr, section->paddr, section->size, section->vsize,
 					perms, section->name);
@@ -2050,7 +2052,7 @@ static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const c
 						r->bin->prefix, section->name, section->size, addr);
 				r_cons_printf ("f %s.section_end.%s 1 0x%08"PFMT64x"\n",
 						r->bin->prefix, section->name, addr + section->size);
-				r_cons_printf ("CC [%02i] va=0x%08"PFMT64x" pa=0x%08"PFMT64x" sz=%"PFMT64d" vsz=%"PFMT64d" "
+				r_cons_printf ("CC section %i va=0x%08"PFMT64x" pa=0x%08"PFMT64x" sz=%"PFMT64d" vsz=%"PFMT64d" "
 						"rwx=%s %s.%s @ 0x%08"PFMT64x"\n",
 						i, addr, section->paddr, section->size, section->vsize,
 						perms, r->bin->prefix, section->name, addr);
@@ -2060,7 +2062,7 @@ static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const c
 						section->name, section->size, addr);
 				r_cons_printf ("f section_end.%s 1 0x%08"PFMT64x"\n",
 						section->name, addr + section->size);
-				r_cons_printf ("CC [%02i] va=0x%08"PFMT64x" pa=0x%08"PFMT64x" sz=%"PFMT64d" vsz=%"PFMT64d" "
+				r_cons_printf ("CC section %i va=0x%08"PFMT64x" pa=0x%08"PFMT64x" sz=%"PFMT64d" vsz=%"PFMT64d" "
 						"rwx=%s %s @ 0x%08"PFMT64x"\n",
 						i, addr, section->paddr, section->size, section->vsize,
 						perms, section->name, addr);

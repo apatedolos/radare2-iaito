@@ -233,6 +233,7 @@ typedef void (*PrintfCallback)(const char *str, ...);
 #define R_NEW_COPY(x,y) x=(void*)malloc(sizeof(y));memcpy(x,y,sizeof(y))
 #define R_MEM_ALIGN(x) ((void *)(size_t)(((ut64)(size_t)x) & 0xfffffffffffff000LL))
 #define R_ARRAY_SIZE(x) (sizeof (x) / sizeof (x[0]))
+#define R_PTR_MOVE(d,s) d=s;s=NULL;
 
 #define R_PTR_ALIGN(v,t) \
 	((char *)(((size_t)(v) ) \
@@ -316,11 +317,15 @@ typedef void (*PrintfCallback)(const char *str, ...);
 #define PFMT64d "I64d"
 #define PFMT64u "I64u"
 #define PFMT64o "I64o"
+#define LDBLFMT "f"
+#define HHXFMT  "x"
 #else
 #define PFMT64x "llx"
 #define PFMT64d "lld"
 #define PFMT64u "llu"
 #define PFMT64o "llo"
+#define LDBLFMT "Lf"
+#define HHXFMT  "hhx"
 #endif
 
 #define PFMT32x "x"

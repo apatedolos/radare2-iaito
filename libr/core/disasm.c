@@ -335,21 +335,13 @@ static void ds_comment_lineup(RDisasmState *ds) {
 	_ds_comment_align_ (ds, true, false);
 }
 
-static void _ds_comment(RDisasmState *ds, bool nl, bool align, const char *format,
-			 va_list ap) {
-	if (ds->show_comments && !ds->show_comment_right && nl) {
-		_ds_comment_align_ (ds, true, true);
-	}
+static void ds_comment(RDisasmState *ds, bool align, const char *format, ...) {
+	va_list ap;
+	va_start (ap, format);
    	if (ds->show_comments && ds->show_comment_right && align) {
 		ds_align_comment (ds);
 	}
 	r_cons_printf_list (format, ap);
-}
-
-static void ds_comment(RDisasmState *ds, bool align, const char *format, ...) {
-	va_list ap;
-	va_start (ap, format);
-	_ds_comment (ds, false, align, format, ap);
 	va_end (ap);
 }
 
@@ -1211,7 +1203,7 @@ static void ds_show_functions(RDisasmState *ds) {
 			}
 			comma = true;
 			r_list_foreach (sp_vars, iter, var) {
-				if (var->delta > f->stack) {
+				if (var->delta > f->maxstack) {
 					if ((arg_bp || !r_list_empty (regs)) && comma) {
 						comma = false;
 						r_cons_printf (", ");
@@ -1273,7 +1265,7 @@ static void ds_show_functions(RDisasmState *ds) {
 				}
 				break;
 			case 's':
-				if ( var->delta < f->stack) {
+				if ( var->delta < f->maxstack) {
 					r_cons_printf ("var %s %s @ %s+0x%x",
 						var->type, var->name,
 						anal->reg->name[R_REG_NAME_SP],
@@ -1872,7 +1864,8 @@ static void ds_adistrick_comments(RDisasmState *ds) {
 }
 
 
-static bool ds_print_data_type(RCore *core, const ut8 *buf, int ib, int size) {
+static bool ds_print_data_type(RDisasmState *ds, const ut8 *buf, int ib, int size) {
+	RCore *core = ds->core;
 	const char *type = NULL;
 	char msg[64];
 	const int isSigned = (ib == 1 || ib == 8 || ib == 10)? 1: 0;
@@ -1884,6 +1877,23 @@ static bool ds_print_data_type(RCore *core, const ut8 *buf, int ib, int size) {
 	default: return false;
 	}
 	ut64 n = r_read_ble (buf, core->print->big_endian, size * 8);
+	{
+		int q = core->print->cur_enabled &&
+			ds->cursor >= ds->index &&
+			ds->cursor < (ds->index + size);
+		if (q) {
+			if (ds->cursor > ds->index) {
+				int diff = ds->cursor - ds->index;
+				r_cons_printf ("  %d  ", diff);
+			} else if (ds->cursor == ds->index) {
+				r_cons_printf ("  *  ");
+			} else {
+			r_cons_printf ("     ");
+			}
+		} else {
+			r_cons_printf ("     ");
+		}
+	}
 
 	switch (ib) {
 	case 1:
@@ -2006,7 +2016,7 @@ static int ds_print_meta_infos(RDisasmState *ds, ut8* buf, int len, int idx) {
 					}
 					ds->oplen = mi->size - delta;
 					core->print->flags &= ~R_PRINT_FLAGS_HEADER;
-					if (!ds_print_data_type (core, buf + idx, ds->hint? ds->hint->immbase: 0, mi->size)) {
+					if (!ds_print_data_type (ds, buf + idx, ds->hint? ds->hint->immbase: 0, mi->size)) {
 						r_cons_printf ("hex length=%" PFMT64d " delta=%d\n", mi->size , delta);
 						r_print_hexdump (core->print, ds->at, buf+idx, hexlen-delta, 16, 1);
 					}
@@ -2554,7 +2564,6 @@ static void ds_print_op_push_info(RDisasmState *ds){
 	}
 }
 
-
 /* convert numeric value in opcode to ascii char or number */
 static void ds_print_ptr(RDisasmState *ds, int len, int idx) {
 	RCore *core = ds->core;
@@ -2593,10 +2602,12 @@ static void ds_print_ptr(RDisasmState *ds, int len, int idx) {
 					(void)r_io_read_at (ds->core->io, ds->analop.ptr,
 							    (ut8 *)str + 1, sizeof (str) - 1);
 					str[sizeof (str) - 1] = 0;
-					if (str[1] && r_str_is_printable (str + 1)) {
+					if (str[1] && r_str_is_printable_incl_newlines (str + 1)) {
 						str[0] = '"';
 						flag = str;
 						strcpy (str + strlen (str), "\"");
+						//Filter out remaining non printable characters, e.g. \n \r
+						r_str_filter ((char*)flag, 0);
 						string_found = true;
 					}
 				}
