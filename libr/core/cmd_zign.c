@@ -385,6 +385,7 @@ static bool zignSearchRange(RCore *core, ut64 from, ut64 to, bool rad) {
 	struct ctxSearchCB ctx = { core, rad };
 
 	ss = r_sign_search_new ();
+	ss->search->align = r_config_get_i (core->config, "search.align");
 	r_sign_search_init (core->anal, ss, zignSearchHitCB, &ctx);
 
 	r_cons_break_push (NULL, NULL);
@@ -412,13 +413,14 @@ static bool zignSearchRange(RCore *core, ut64 from, ut64 to, bool rad) {
 	return retval;
 }
 
-static bool zignDoSearch(RCore *core, ut64 from, ut64 to, bool rad) {
+static bool zignDoSearch(RCore *core, bool rad) {
 	RList *list;
 	RListIter *iter;
 	RIOMap *map;
-	bool search_all = false;
 	bool retval = true;
 	const char *zign_prefix = r_config_get (core->config, "zign.prefix");
+	const char *mode = r_config_get (core->config, "search.in");
+	ut64 sin_from = UT64_MAX, sin_to = UT64_MAX;
 
 	if (rad) {
 		r_cons_printf ("fs+%s\n", zign_prefix);
@@ -429,36 +431,25 @@ static bool zignDoSearch(RCore *core, ut64 from, ut64 to, bool rad) {
 		}
 	}
 
-	if (from == 0 && to == 0) {
-		search_all = true;
-	} else if (to <= from) {
-		eprintf ("error: invalid rage 0x%08"PFMT64x"-0x%08"PFMT64x"\n", from, to);
-		retval = false;
-		goto exit_func;
-	}
-
-	if (search_all) {
-		list = r_core_get_boundaries_ok (core);
-		if (!list) {
-			eprintf ("error: invalid map boundaries\n");
-			retval = false;
-			goto exit_func;
-		}
+	list = r_core_get_boundaries_prot (core, R_IO_EXEC | R_IO_WRITE | R_IO_READ, mode, &sin_from, &sin_to);
+	if (list) {
 		r_list_foreach (list, iter, map) {
 			eprintf ("[+] searching 0x%08"PFMT64x" - 0x%08"PFMT64x"\n", map->from, map->to);
 			retval &= zignSearchRange (core, map->from, map->to, rad);
 		}
 		r_list_free (list);
 	} else {
-		eprintf ("[+] searching 0x%08"PFMT64x" - 0x%08"PFMT64x"\n", from, to);
-		retval = zignSearchRange (core, from, to, rad);
+		eprintf ("[+] searching 0x%08"PFMT64x" - 0x%08"PFMT64x"\n", sin_from, sin_to);
+		retval = zignSearchRange (core, sin_from, sin_to, rad);
 	}
 
-exit_func:
 	if (rad) {
 		r_cons_printf ("fs-\n");
 	} else {
-		r_flag_space_pop (core->flags);
+		if (!r_flag_space_pop (core->flags)) {
+			eprintf ("error: cannot restore flagspace\n");
+			return false;
+		}
 	}
 
 	return retval;
@@ -469,59 +460,20 @@ static int zignSearch(void *data, const char *input) {
 
 	switch (*input) {
 	case '\x00':
-	case ' ':
 	case '*':
-		{
-			ut64 from = 0, to = 0;
-			char *args = NULL;
-			int n = 0;
-			bool retval = true;
-
-			if (input[0]) {
-				args = r_str_new (input + 1);
-				r_str_trim_head (args);
-				n = r_str_word_set0(args);
-			} else {
-				n = 0;
-			}
-
-			switch (n) {
-			case 2:
-				from = r_num_math (core->num, r_str_word_get0(args, 0));
-				to = r_num_math (core->num, r_str_word_get0(args, 1));
-				break;
-			case 1:
-				from = core->offset;
-				to = r_num_math (core->num, r_str_word_get0(args, 0));
-				break;
-			case 0:
-				break;
-			default:
-				eprintf ("usage: z/[*] [from] [to]\n");
-				retval = false;
-				goto exit_case;
-			}
-
-			retval = zignDoSearch (core, from, to, input[0] == '*');
-
-exit_case:
-			free (args);
-
-			return retval;
-		}
-		break;
+		return zignDoSearch (core, input[0] == '*');
 	case '?':
 		{
 			const char *help_msg[] = {
-				"Usage:", "z/[*] [from] [to] ", "# Search signatures",
-				"z/ ", "[from] [to]", "search zignatures on range and flag matches",
-				"z/* ", "[from] [to]", "search zignatures on range and output radare commands",
+				"Usage:", "z/[*] ", "# Search signatures (see 'e?search' for options)",
+				"z/ ", "", "search zignatures on range and flag matches",
+				"z/* ", "", "search zignatures on range and output radare commands",
 				NULL};
 			r_core_cmd_help (core, help_msg);
 		}
 		break;
 	default:
-		eprintf ("usage: z/[*] [from] [to]\n");
+		eprintf ("usage: z/[*]\n");
 	}
 
 	return true;

@@ -162,6 +162,7 @@ static int visual_help() {
 		" /        in cursor mode search in current block\n"
 		" :cmd     run radare command\n"
 		" ;[-]cmt  add/remove comment\n"
+		" [1-9]    follow jmp/call identified by shortcut (like ;[1])\n"
 		" ,file    add a link to the text file\n"
 		" /*+-[]   change block size, [] = resize hex.cols\n"
 		" </>      seek aligned to block size (seek cursor in cursor mode)\n"
@@ -846,7 +847,9 @@ repeat:
 				/* prepare highlight */
 				char *cmd = strdup (r_config_get (core->config, "scr.highlight"));
 				char *ats = r_str_newf ("%"PFMT64x, curat);
-				r_config_set (core->config, "scr.highlight", ats);
+				if (ats) {
+					(void) r_config_set (core->config, "scr.highlight", ats);
+				}
 				/* print disasm */
 				char *d = r_str_ansi_crop (dis, 0, 0, cols, rows - 9);
 				r_cons_printf ("%s", d);
@@ -923,7 +926,7 @@ repeat:
 	fun = r_anal_get_fcn_in (core->anal, addr, R_ANAL_FCN_TYPE_NULL);
 	if (fun) {
 		bool asm_bytes = r_config_get_i (core->config, "asm.bytes");
-		r_config_set_i (core->config, "asm.bytes", false);
+		(void) r_config_set_i (core->config, "asm.bytes", false);
 		r_cons_clear00 ();
 		r_cons_gotoxy (1, 1);
 		r_cons_printf ("[GOTO REF]> 0x%08"PFMT64x "\n", addr);
@@ -1007,7 +1010,7 @@ repeat:
 				dis = NULL;
 			}
 		}
-		r_config_set_i (core->config, "asm.bytes", asm_bytes);
+		(void) r_config_set_i (core->config, "asm.bytes", asm_bytes);
 	}
 
 	if (!count) {
@@ -1572,7 +1575,7 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 			buf = r_line_readline ();
 //		if (r_cons_fgets (buf, sizeof (buf)-4, 0, NULL) <0) buf[0]='\0';
 			I->line->contents = NULL;
-			r_config_set (core->config, "cmd.vprompt", buf);
+			(void)r_config_set (core->config, "cmd.vprompt", buf);
 		}
 		break;
 		case '|':
@@ -1585,7 +1588,7 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 			buf = r_line_readline ();
 //		if (r_cons_fgets (buf, sizeof (buf)-4, 0, NULL) <0) buf[0]='\0';
 			I->line->contents = NULL;
-			r_config_set (core->config, "cmd.cprompt", buf);
+			(void)r_config_set (core->config, "cmd.cprompt", buf);
 		}
 		break;
 		case '!':

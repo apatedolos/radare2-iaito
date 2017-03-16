@@ -3248,7 +3248,7 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 				" tab          - select next node\n"
 				" TAB          - select previous node\n"
 				" t/f          - follow true/false edges\n"
-				" g([A-Za-z]*) - follow jmp/call identified by shortcut\n"
+				" g([A-Za-z]*) - follow jmp/call identified by shortcut (like ;[ga])\n"
 				" G            - debug trace callgraph (generated with dtc)\n"
 				" F            - enter flag selector\n"
 				" _            - enter hud selector\n"
@@ -3319,6 +3319,10 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 				g->layout = r_config_get_i (core->config, "graph.layout");
 				g->need_reload_nodes = true;
 			}
+			break;
+		case '$':
+			r_core_cmd0 (core, "e!asm.pseudo");
+			g->need_reload_nodes = true;
 			break;
 		case 'R':
 			if (!fcn) {

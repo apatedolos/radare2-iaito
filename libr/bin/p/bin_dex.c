@@ -162,7 +162,7 @@ static char *dex_type_descriptor(RBinDexObj *bin, int type_idx) {
 
 static char *dex_method_signature(RBinDexObj *bin, int method_idx) {
 	ut32 proto_id, params_off, type_id, list_size;
-	char *r, *return_type = NULL, *signature = NULL, *buff = NULL; 
+	char *r = NULL, *return_type = NULL, *signature = NULL, *buff = NULL; 
 	ut8 *bufptr;
 	ut16 type_idx;
 	int pos = 0, i, size = 1;
@@ -213,7 +213,7 @@ static char *dex_method_signature(RBinDexObj *bin, int method_idx) {
 		char *newsig = realloc (signature, size);
 		if (!newsig) {
 			eprintf ("Cannot realloc to %d\n", size);
-			free (signature);
+			R_FREE (signature);
 			break;
 		}
 		signature = newsig;
@@ -221,8 +221,10 @@ static char *dex_method_signature(RBinDexObj *bin, int method_idx) {
 		pos += buff_len;
 		signature[pos] = '\0';
 	}
-	r = r_str_newf ("(%s)%s", signature, return_type);
-	free (signature);
+	if (signature) {
+		r = r_str_newf ("(%s)%s", signature, return_type);
+		free (signature);
+	}
 	return r;
 }
 
@@ -619,15 +621,13 @@ static void dex_parse_debug_item(RBinFile *binfile, RBinDexObj *bin,
 	free (params);
 }
 
-static Sdb *get_sdb (RBinObject *o) {
+static Sdb *get_sdb (RBinFile *bf) {
+	RBinObject *o = bf->o;
 	if (!o || !o->bin_obj) {
 		return NULL;
 	}
 	struct r_bin_dex_obj_t *bin = (struct r_bin_dex_obj_t *) o->bin_obj;
-	if (bin->kv) {
-		return bin->kv;
-	}
-	return NULL;
+	return bin? bin->kv: NULL;
 }
 
 static void *load_bytes(RBinFile *arch, const ut8 *buf, ut64 sz, ut64 loadaddr, Sdb *sdb){

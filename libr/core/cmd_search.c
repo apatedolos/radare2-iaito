@@ -266,8 +266,8 @@ R_API int r_core_search_preludes(RCore *core) {
 	const char *prelude = r_config_get (core->config, "anal.prelude");
 	const char *arch = r_config_get (core->config, "asm.arch");
 	int bits = r_config_get_i (core->config, "asm.bits");
-	ut64 from = -1; // core->offset;
-	ut64 to = -1; // core->offset + 0xffffff; // hacky!
+	ut64 from = UT64_MAX;
+	ut64 to = UT64_MAX;
 	int fc0, fc1;
 	int cfg_debug = r_config_get_i (core->config, "cfg.debug");
 	const char *where = cfg_debug? "dbg.map": "io.sections.exec";
@@ -397,7 +397,7 @@ static int __cb_hit(RSearchKeyword *kw, void *user, ut64 addr) {
 				const int ctx = 16;
 				char *pre, *pos, *wrd;
 				const int len = kw->keyword_length;
-				char *buf = malloc (len + 32 + ctx * 2);
+				char *buf = calloc (1, len + 32 + ctx * 2);
 				r_core_read_at (core, addr - ctx, (ut8*)buf, len + (ctx * 2));
 				pre = getstring (buf, ctx);
 				wrd = r_str_utf16_encode (buf + ctx, len);
@@ -513,8 +513,23 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, int protection, const char 
 		*from = core->offset;
 		*to = core->offset + core->blocksize;
 	} else if (!strcmp (mode, "io.maps")) {
+		RListIter *iter;
+		RIOMap *m;
+
 		*from = *to = 0;
-		return core->io->maps;
+
+		list = r_list_newf (free);
+		r_list_foreach (core->io->maps, iter, m) {
+			RIOMap *map = R_NEW0 (RIOMap);
+			map->fd = m->fd;
+			map->from = m->from;
+			map->to = m->to;
+			map->flags = m->flags;
+			map->delta = m->delta;
+			r_list_append (list, map);
+		}
+
+		return list;
 	} else if (!strcmp (mode, "io.maps.range")) {
 		RListIter *iter;
 		RIOMap *m;
@@ -540,7 +555,7 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, int protection, const char 
 			RIOSection *s;
 			*from = *to = 0;
 			r_list_foreach (core->io->sections, iter, s) {
-				if (!(s->rwx & R_IO_MAP)) {
+				if (!(s->flags & R_IO_MAP)) {
 					continue;
 				}
 				if (!*from) {
@@ -582,7 +597,7 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, int protection, const char 
 			RIOSection *s;
 			*from = *to = core->offset;
 			r_list_foreach (core->io->sections, iter, s) {
-				if (*from >= s->offset && *from < (s->offset+s->size)) {
+				if (*from >= s->paddr && *from < (s->paddr+s->size)) {
 					*from = s->vaddr;
 					*to = s->vaddr+s->vsize;
 					break;
@@ -641,7 +656,7 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, int protection, const char 
 			*from = UT64_MAX;
 			*to = 0;
 			r_list_foreach (core->io->sections, iter, s) {
-				if (!mask || (s->rwx & mask)) {
+				if (!mask || (s->flags & mask)) {
 					if (!list) {
 						list = r_list_newf (free);
 						maplist = true;
@@ -660,7 +675,7 @@ R_API RList *r_core_get_boundaries_prot(RCore *core, int protection, const char 
 						if (map->to > *to)
 							*to = map->to;
 					}
-					map->flags = s->rwx;
+					map->flags = s->flags;
 					map->delta = 0;
 					if (!(map->flags & protection)) {
 						R_FREE (map);

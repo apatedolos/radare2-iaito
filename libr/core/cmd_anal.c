@@ -2772,6 +2772,21 @@ static void showregs (RList *list) {
 	}
 }
 
+static void showregs_json (RList *list) {
+	r_cons_printf ("[");
+	if (!r_list_empty (list)) {
+		char *reg;
+		RListIter *iter;
+		r_list_foreach (list, iter, reg) {
+			r_cons_printf ("\"%s\"", reg);
+			if (iter->n) {
+				r_cons_printf (",");
+			}
+		}
+	}
+	r_cons_printf ("]");
+}
+
 static bool cmd_aea(RCore* core, int mode, ut64 addr, int length) {
 	RAnalEsil *esil;
 	int ptr, ops, ops_end = 0, len, buf_sz, maxopsize;
@@ -2780,6 +2795,7 @@ static bool cmd_aea(RCore* core, int mode, ut64 addr, int length) {
 	const char *esilstr;
 	RAnalOp aop = {0};
 	ut8 *buf;
+	RList* regnow;
 	if (!core)
 		return false;
 	maxopsize = r_anal_archinfo (core->anal, R_ANAL_ARCHINFO_MAX_OP_SIZE);
@@ -2831,22 +2847,34 @@ static bool cmd_aea(RCore* core, int mode, ut64 addr, int length) {
 	esil->cb.hook_reg_read = NULL;
 	esil_fini (core);
 
+	regnow = r_list_newf(free);
+	{
+		RListIter *iter;
+		char *reg;
+		r_list_foreach (stats.regs, iter, reg) {
+			if (!contains (stats.regwrite, reg)) {
+				r_list_push (regnow, strdup (reg));
+			}
+		}
+	}
+
 	/* show registers used */
 	if ((mode >> 1) & 1) {
 		showregs (stats.regread);
 	} else if ((mode >> 2) & 1) {
 		showregs (stats.regwrite);
 	} else if ((mode >> 3) & 1) {
-		RListIter *iter;
-		char *reg;
-		r_list_foreach (stats.regs, iter, reg) {
-			if (!contains (stats.regwrite, reg)) {
-				r_cons_print (reg);
-				if (iter->n) {
-					r_cons_printf (" ");
-				}
-			}
-		}
+		showregs (regnow);
+	} else if ((mode >> 4) & 1) {
+		r_cons_printf ("{\"A\":");
+		showregs_json (stats.regs);
+		r_cons_printf (",\"R\":");
+		showregs_json (stats.regread);
+		r_cons_printf (",\"W\":");
+		showregs_json (stats.regwrite);
+		r_cons_printf (",\"N\":");
+		showregs_json (regnow);
+		r_cons_printf ("}");
 		r_cons_newline();
 	} else {
 		r_cons_printf ("A: ");
@@ -2856,22 +2884,15 @@ static bool cmd_aea(RCore* core, int mode, ut64 addr, int length) {
 		r_cons_printf ("W: ");
 		showregs (stats.regwrite);
 		r_cons_printf ("N: ");
-		{
-			RListIter *iter;
-			char *reg;
-			r_list_foreach (stats.regs, iter, reg) {
-				if (!contains (stats.regwrite, reg)) {
-					r_cons_print (reg);
-					if (iter->n) {
-						r_cons_printf (" ");
-					}
-				}
-			}
+		if (r_list_length (regnow)) {
+			showregs (regnow);
+		} else {
 			r_cons_newline();
 		}
 	}
 	aea_stats_fini (&stats);
 	free (buf);
+	R_FREE (regnow);
 	return true;
 }
 
@@ -2883,6 +2904,7 @@ static void aea_help(RCore *core) {
 		"aear", " [ops]", "Show regs read in N instructions",
 		"aeaw", " [ops]", "Show regs written in N instructions",
 		"aean", " [ops]", "Show regs not written in N instructions",
+		"aeaj", " [ops]", "Show aea output in JSON format",
 		"aeA", " [len]", "Show regs used in N bytes (subcommands are the same)",
 		NULL };
 	r_core_cmd_help (core, help_msg);
@@ -3197,6 +3219,8 @@ static void cmd_anal_esil(RCore *core, const char *input) {
 			cmd_aea (core, 1 + (1<<2), core->offset, r_num_math (core->num, input+2));
 		} else if (input[1] == 'n') {
 			cmd_aea (core, 1 + (1<<3), core->offset, r_num_math (core->num, input+2));
+		} else if (input[1] == 'j') {
+			cmd_aea (core, 1 + (1<<4), core->offset, r_num_math (core->num, input+2));
 		} else if (input[1] == 'f') {
 			RAnalFunction *fcn = r_anal_get_fcn_in (core->anal, core->offset, -1);
 			if (fcn) {
@@ -3215,6 +3239,8 @@ static void cmd_anal_esil(RCore *core, const char *input) {
 			cmd_aea (core, 1<<2, core->offset, r_num_math (core->num, input+2));
 		} else if (input[1] == 'n') {
 			cmd_aea (core, 1<<3, core->offset, r_num_math (core->num, input+2));
+		} else if (input[1] == 'j') {
+			cmd_aea (core, 1<<4, core->offset, r_num_math (core->num, input+2));
 		} else if (input[1] == 'f') {
 			RAnalFunction *fcn = r_anal_get_fcn_in (core->anal, core->offset, -1);
 			if (fcn) {
@@ -3435,12 +3461,12 @@ static void cmd_anal_aftertraps(RCore *core, const char *input) {
 	if (!len) {
 		// ignore search.in to avoid problems. analysis != search
 		RIOSection *s = r_io_section_vget (core->io, addr);
-		if (s && s->rwx & 1) {
+		if (s && s->flags & 1) {
 			// search in current section
 			if (s->size > binfile->size) {
 				addr = s->vaddr;
-				if (binfile->size > s->offset) {
-					len = binfile->size - s->offset;
+				if (binfile->size > s->paddr) {
+					len = binfile->size - s->paddr;
 				} else {
 					eprintf ("Opps something went wrong aac\n");
 					return;
@@ -3525,7 +3551,7 @@ static void cmd_anal_blocks(RCore *core, const char *input) {
 	ut64 max = 0;
 	r_list_foreach (core->io->sections, iter, s) {
 		/* is executable */
-		if (!(s->rwx & R_IO_EXEC)) {
+		if (!(s->flags & R_IO_EXEC)) {
 			continue;
 		}
 		if (s->vaddr < min) {
@@ -3623,7 +3649,7 @@ static void cmd_anal_calls(RCore *core, const char *input) {
 			RListIter *iter;
 			ranges = r_list_newf ((RListFree)free);
 			r_list_foreach (core->io->sections, iter, s) {
-				if (s->rwx & 1) {
+				if (s->flags & 1) {
 					RIOMap *m = R_NEW0 (RIOMap);
 					if (!m) {
 						continue;
@@ -4890,7 +4916,7 @@ R_API int r_core_anal_refs(RCore *core, const char *input) {
 			if (section) {
 				from = section->vaddr;
 				to = section->vaddr + section->vsize;
-				rwx = section->rwx;
+				rwx = section->flags;
 			}
 		} else {
 			RIOMap *map = r_io_map_get (core->io, core->offset);
@@ -4958,7 +4984,7 @@ static int compute_coverage(RCore *core) {
 	r_list_foreach (core->anal->fcns, iter, fcn) {
 		r_list_foreach (core->io->sections, iter2, sec) {
 			int section_end = sec->vaddr + sec->vsize;
-			if (sec->rwx & 1 && fcn->addr >= sec->vaddr && fcn->addr < section_end) {
+			if (sec->flags & 1 && fcn->addr >= sec->vaddr && fcn->addr < section_end) {
 				cov += r_anal_fcn_realsize (fcn);
 			}
 		}
@@ -4971,7 +4997,7 @@ static int compute_code (RCore* core) {
 	RListIter *iter;
 	RIOSection *sec;
 	r_list_foreach (core->io->sections, iter, sec) {
-		if (sec->rwx & 1) {
+		if (sec->flags & 1) {
 			code += sec->vsize;
 		}
 	}
@@ -5170,7 +5196,7 @@ static int cmd_anal_all(RCore *core, const char *input) {
 			char *dh_orig = core->dbg->h
 					? strdup (core->dbg->h->name)
 					: strdup ("esil");
-			if (core->io && core->io->plugin && !core->io->plugin->isdbg) {
+			if (core->io && core->io->desc && core->io->desc->plugin && !core->io->desc->plugin->isdbg) {
 				//use dh_origin if we are debugging
 				R_FREE (dh_orig);
 			}

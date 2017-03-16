@@ -31,7 +31,8 @@ static inline bool setimpord(ELFOBJ* eobj, ut32 ord, RBinImport *ptr) {
 	return true;
 }
 
-static Sdb* get_sdb(RBinObject *o) {
+static Sdb* get_sdb(RBinFile *bf) {
+	RBinObject *o = bf->o;
 	if (o && o->bin_obj) {
 		struct Elf_(r_bin_elf_obj_t) *bin = (struct Elf_(r_bin_elf_obj_t) *) o->bin_obj;
 		return bin->kv;
@@ -697,15 +698,15 @@ static RList* patch_relocs(RBin *b) {
 		return relocs (r_bin_cur (b));
 	}
 	r_list_foreach (io->sections, iter, s) {
-		if (s->offset > offset) {
-			offset = s->offset;
+		if (s->paddr > offset) {
+			offset = s->paddr;
 			g = s;
 		}
 	}
 	if (!g) {
 		return NULL;
 	}
-	n_off = g->offset + g->size;
+	n_off = g->paddr + g->size;
 	n_vaddr = g->vaddr + g->vsize;
 	//reserve at least that space
 	size = bin->reloc_num * 4;
@@ -998,7 +999,7 @@ static RBuffer* create(RBin* bin, const ut8 *code, int codelen, const ut8 *data,
 
 RBinPlugin r_bin_plugin_elf = {
 	.name = "elf",
-	.desc = "ELF format r_bin plugin",
+	.desc = "ELF format r2 plugin",
 	.license = "LGPL3",
 	.get_sdb = &get_sdb,
 	.load = &load,

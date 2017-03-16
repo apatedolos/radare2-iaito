@@ -1006,10 +1006,14 @@ R_API int r_core_visual_trackflags(RCore *core) {
 	int delta = 7;
 	int menu = 0;
 
-	for (j=i=0; i<R_FLAG_SPACES_MAX; i++)
-		if (core->flags->spaces[i])
+	for (j=i=0; i<R_FLAG_SPACES_MAX; i++) {
+		if (core->flags->spaces[i]) {
 			j = 1;
-	if (j==0) menu = 1;
+		}
+	}
+	if (j == 0) {
+		menu = 1;
+	}
 	for (;;) {
 		r_cons_clear00 ();
 
@@ -1054,7 +1058,9 @@ R_API int r_core_visual_trackflags(RCore *core) {
 				default: format = 0; continue;
 				}
 				if (*cmd) r_core_cmd (core, cmd, 0);
-			} else r_cons_printf ("(no flags)\n");
+			} else {
+				r_cons_printf ("(no flags)\n");
+			}
 		} else {
 			r_cons_printf ("Flag spaces:\n\n");
 			hit = 0;
@@ -1412,7 +1418,8 @@ static void config_visual_hit_i(RCore *core, const char *name, int delta) {
 	struct r_config_node_t *node;
 	node = r_config_node_get (core->config, name);
 	if (node && ((node->flags & CN_INT) || (node->flags & CN_OFFT))) {
-		r_config_set_i(core->config, name, r_config_get_i(core->config, name)+delta);
+		int hitDelta = r_config_get_i (core->config, name) + delta;
+		(void) r_config_set_i (core->config, name, hitDelta);
 	}
 }
 
@@ -2879,7 +2886,7 @@ R_API void r_core_visual_colors(RCore *core) {
 			"# Press 'rRgGbB', 'jk' or 'q'\nec %s %s   # %d (%s)\n",
 			opt, k, color, atoi (cstr+7), cstr+1);
 		r_core_cmdf (core, "ec %s %s", k, color);
-		r_core_cmd0 (core, "pd 25");
+		r_core_cmd0 (core, "pd $r-8");
 		r_cons_flush ();
 		ch = r_cons_readchar ();
 		ch = r_cons_arrow_to_hjkl (ch);
