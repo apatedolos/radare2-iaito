@@ -1756,11 +1756,6 @@ static char *get_body(RCore *core, ut64 addr, int size, int opts) {
 	core->print->cur_enabled = o_cursor;
 	r_config_restore (hc);
 	r_config_hold_free (hc);
-	char *crop = r_str_ansi_crop (body, 0, 0, 60, 99999);
-	if (crop) {
-		free (body);
-		return crop;
-	}
 	return body;
 }
 
@@ -2437,9 +2432,9 @@ static void agraph_merge_child(RAGraph *g, int idx) {
 	if (cn && nn) {
 		RANode *ann = get_anode (nn);
 		RANode *acn = get_anode (cn);
-		acn->body = r_str_concat (acn->body, ann->title);
-		acn->body = r_str_concat (acn->body, "\n");
-		acn->body = r_str_concat (acn->body, ann->body);
+		acn->body = r_str_append (acn->body, ann->title);
+		acn->body = r_str_append (acn->body, "\n");
+		acn->body = r_str_append (acn->body, ann->body);
 		/* remove node from the graph */
 		acn->h += ann->h - 3;
 		free (ann->body);

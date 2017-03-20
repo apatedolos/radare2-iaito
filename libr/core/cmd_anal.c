@@ -492,10 +492,10 @@ R_API char *cmd_syscall_dostr(RCore *core, int n) {
 	}
 	RSyscallItem *item = r_syscall_get (core->anal->syscall, n, -1);
 	if (!item) {
-		res = r_str_concatf (res, "%d = unknown ()", n);
+		res = r_str_appendf (res, "%d = unknown ()", n);
 		return res;
 	}
-	res = r_str_concatf (res, "%d = %s (", item->num, item->name);
+	res = r_str_appendf (res, "%d = %s (", item->num, item->name);
 	// TODO: move this to r_syscall
 	for (i = 0; i < item->args; i++) {
 		//TODO replace the hardcoded CC with the sdb ones
@@ -504,17 +504,17 @@ R_API char *cmd_syscall_dostr(RCore *core, int n) {
 		if (item->sargs) {
 			switch (item->sargs[i]) {
 			case 'p': // pointer
-				res = r_str_concatf (res, "0x%08" PFMT64x "", arg);
+				res = r_str_appendf (res, "0x%08" PFMT64x "", arg);
 				break;
 			case 'i':
-				res = r_str_concatf (res, "%" PFMT64d "", arg);
+				res = r_str_appendf (res, "%" PFMT64d "", arg);
 				break;
 			case 'z':
 				r_io_read_at (core->io, arg, (ut8 *)str, sizeof (str));
 				// TODO: filter zero terminated string
 				str[63] = '\0';
 				r_str_filter (str, strlen (str));
-				res = r_str_concatf (res, "\"%s\"", str);
+				res = r_str_appendf (res, "\"%s\"", str);
 				break;
 			case 'Z': {
 				//TODO replace the hardcoded CC with the sdb ones
@@ -526,20 +526,20 @@ R_API char *cmd_syscall_dostr(RCore *core, int n) {
 				(void)r_io_read_at (core->io, arg, (ut8 *)str, len);
 				str[len] = 0;
 				r_str_filter (str, -1);
-				res = r_str_concatf (res, "\"%s\"", str);
+				res = r_str_appendf (res, "\"%s\"", str);
 			} break;
 			default:
-				res = r_str_concatf (res, "0x%08" PFMT64x "", arg);
+				res = r_str_appendf (res, "0x%08" PFMT64x "", arg);
 				break;
 			}
 		} else {
-			res = r_str_concatf (res, "0x%08" PFMT64x "", arg);
+			res = r_str_appendf (res, "0x%08" PFMT64x "", arg);
 		}
 		if (i + 1 < item->args) {
-			res = r_str_concatf (res, ", ");
+			res = r_str_appendf (res, ", ");
 		}
 	}
-	res = r_str_concatf (res, ")");
+	res = r_str_appendf (res, ")");
 	return res;
 }
 
@@ -3980,6 +3980,7 @@ static bool cmd_anal_refs(RCore *core, const char *input) {
 			} else if (input[1] == 'j') { // "axtj"
 				bool asm_varsub = r_config_get_i (core->config, "asm.varsub");
 				core->parser->relsub = r_config_get_i (core->config, "asm.relsub");
+				core->parser->localvar_only = r_config_get_i (core->config, "asm.varsub_only");
 				r_cons_printf ("[");
 				r_list_foreach (list, iter, ref) {
 					r_core_read_at (core, ref->addr, buf, size);
@@ -4011,6 +4012,7 @@ static bool cmd_anal_refs(RCore *core, const char *input) {
 				char *comment;
 				bool asm_varsub = r_config_get_i (core->config, "asm.varsub");
 				core->parser->relsub = r_config_get_i (core->config, "asm.relsub");
+				core->parser->localvar_only = r_config_get_i (core->config, "asm.varsub_only");
 				if (core->parser->relsub) {
 					core->parser->relsub_addr = addr;
 				}
@@ -4443,14 +4445,14 @@ static void cmd_agraph_node(RCore *core, const char *input) {
 				}
 				body = newbody;
 			}
-			body = r_str_concat (body, "\n");
+			body = r_str_append (body, "\n");
 		} else {
 			body = strdup ("");
 		}
 		r_agraph_add_node (core->graph, args[0], body);
 		r_str_argv_free (args);
 		free (body);
-		//free newbody it's not necessary since r_str_concat reallocate the space
+		//free newbody it's not necessary since r_str_append reallocate the space
 		break;
 	}
 	case '-': {
@@ -4983,9 +4985,12 @@ static int compute_coverage(RCore *core) {
 	int cov = 0;
 	r_list_foreach (core->anal->fcns, iter, fcn) {
 		r_list_foreach (core->io->sections, iter2, sec) {
-			int section_end = sec->vaddr + sec->vsize;
-			if (sec->flags & 1 && fcn->addr >= sec->vaddr && fcn->addr < section_end) {
-				cov += r_anal_fcn_realsize (fcn);
+			if (sec->flags & 1) {
+				ut64 section_end = sec->vaddr + sec->vsize;
+				ut64 s = r_anal_fcn_realsize (fcn);
+				if (fcn->addr >= sec->vaddr && (fcn->addr + s) < section_end) {
+					cov += s;
+				}
 			}
 		}
 	}

@@ -32,7 +32,7 @@ static void * load_bytes(RBinFile *arch, const ut8 *buf, ut64 sz, ut64 loadaddr,
 	return res;
 }
 
-static int load(RBinFile *arch) {
+static bool load(RBinFile *arch) {
 	void *res;
 	const ut8 *bytes;
 	ut64 sz;
@@ -325,7 +325,7 @@ static RList* imports(RBinFile *arch) {
 		{
 			ut8 addr[4];
 			r_buf_read_at (arch->buf, imports[i].paddr, addr, 4);
-			ut64 newaddr = r_read_le32 (&addr);
+			ut64 newaddr = (ut64) r_read_le32 (&addr);
 			rel->vaddr = newaddr;
 		}
 		rel->paddr = imports[i].paddr;
@@ -761,6 +761,8 @@ static void header(RBinFile *arch) {
 	}
 }
 
+extern struct r_bin_write_t r_bin_write_pe;
+
 RBinPlugin r_bin_plugin_pe = {
 	.name = "pe",
 	.desc = "PE bin plugin",
@@ -785,7 +787,8 @@ RBinPlugin r_bin_plugin_pe = {
 	.relocs = &relocs,
 	.minstrlen = 4,
 	.create = &create,
-	.get_vaddr = &get_vaddr
+	.get_vaddr = &get_vaddr,
+	.write = &r_bin_write_pe
 };
 
 #ifndef CORELIB

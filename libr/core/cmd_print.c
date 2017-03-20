@@ -1959,7 +1959,12 @@ static void disasm_strings(RCore *core, const char *input, RAnalFunction *fcn) {
 			} else {
 				string2 = strdup (str + 1);
 			}
-			if (!string && string2) {
+			if (string2) {
+				/* the str.* flag will win over naked "string",
+				 * since it's generally more accurate */
+				if (string) {
+					R_FREE (string);
+				}
 				string = string2;
 				string2 = NULL;
 			}
@@ -3713,7 +3718,7 @@ static int cmd_print(void *data, const char *input) {
 				"ps", "", "print string",
 				"psi", "", "print string inside curseek",
 				"psb", "", "print strings in current block",
-				"psx", "", "show string with scaped chars",
+				"psx", "", "show string with escaped chars",
 				"psz", "", "print zero terminated string",
 				"psp", "", "print pascal string",
 				"psu", "", "print utf16 unicode (json)",
