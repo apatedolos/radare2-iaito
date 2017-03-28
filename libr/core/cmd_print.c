@@ -3594,7 +3594,7 @@ static int cmd_print(void *data, const char *input) {
 			break;
 		case 0:
 			/* "pd" -> will disassemble blocksize/4 instructions */
-			if (*input == 'd') {
+			if (*input == 'd' && !core->fixedblock) {
 				l /= 4;
 			}
 			break;
@@ -3729,7 +3729,7 @@ static int cmd_print(void *data, const char *input) {
 			r_core_cmd_help (core, help_msg);
 		}
 			break;
-		case 'j':
+		case 'j': // "psj"
 			if (l > 0) {
 				char *str, *type;
 				ut64 vaddr;
@@ -4085,10 +4085,13 @@ static int cmd_print(void *data, const char *input) {
 	{
 		int show_offset = r_config_get_i (core->config, "asm.offset");
 		if (show_offset) {
-			core->print->flags |= R_PRINT_FLAGS_HEADER;
 			core->print->flags |= R_PRINT_FLAGS_OFFSET;
 		} else {
 			core->print->flags &= ~R_PRINT_FLAGS_OFFSET;
+		}
+		if (r_config_get_i (core->config, "hex.header")) {
+			core->print->flags |= R_PRINT_FLAGS_HEADER;
+		} else {
 			core->print->flags &= ~R_PRINT_FLAGS_HEADER;
 		}
 		/* Don't show comments in default case */

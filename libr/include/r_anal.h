@@ -1012,7 +1012,9 @@ typedef struct r_anal_esil_t {
 	RAnalReil *Reil;
 	char *cmd_intr; // r2 (external) command to run when an interrupt occurs
 	char *cmd_trap; // r2 (external) command to run when an interrupt occurs
-	int (*cmd)(ESIL *esil, const char *name, int a0, int a1);
+	char *cmd_mdev; // r2 (external) command to run when an interrupt occurs
+	char *mdev_range; // string containing the r_str_range to match for read/write accesses
+	bool (*cmd)(ESIL *esil, const char *name, ut64 a0, ut64 a1);
 	void *user;
 } RAnalEsil;
 
@@ -1569,8 +1571,9 @@ R_API int r_anal_noreturn_drop(RAnal *anal, const char *expr);
 R_API bool r_anal_noreturn_at_addr(RAnal *anal, ut64 addr);
 
 /* zign spaces */
-R_API void r_sign_space_unset_for(RAnal *a, int type);
-R_API int r_sign_space_count_for(RAnal *a, int ctx);
+R_API int r_sign_space_count_for(RAnal *a, int idx);
+R_API void r_sign_space_unset_for(RAnal *a, int idx);
+R_API void r_sign_space_rename_for(RAnal *a, int idx, const char *oname, const char *nname);
 
 /* plugin pointers */
 extern RAnalPlugin r_anal_plugin_null;

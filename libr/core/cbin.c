@@ -888,7 +888,7 @@ static int bin_dwarf(RCore *core, int mode) {
 }
 
 static int bin_pdb(RCore *core, int mode) {
-	R_PDB pdb = {0};
+	R_PDB pdb = R_EMPTY;
 	ut64 baddr = r_bin_get_baddr (core->bin);
 
 	pdb.cb_printf = r_cons_printf;
@@ -1423,7 +1423,7 @@ static int bin_imports(RCore *r, int mode, int va, const char *name) {
 		r_cons_println ("[Imports]");
 	}
 	r_list_foreach (imports, iter, import) {
-		char *symname, *escname;
+		char *symname;
 		ut64 addr;
 		if (name && strcmp (import->name, name)) {
 			continue;
@@ -1444,11 +1444,10 @@ static int bin_imports(RCore *r, int mode, int va, const char *name) {
 			free (symname);
 			symname = prname;
 		}
-		escname = r_str_escape (symname);
 		if (IS_MODE_SET (mode)) {
 			// TODO(eddyb) symbols that are imports.
 		} else if (IS_MODE_SIMPLE (mode)) {
-			r_cons_println (escname);
+			r_cons_println (symname);
 		} else if (IS_MODE_JSON (mode)) {
 			str = r_str_utf16_encode (symname, -1);
 			str = r_str_replace (str, "\"", "\\\"", 1);
@@ -1478,14 +1477,13 @@ static int bin_imports(RCore *r, int mode, int va, const char *name) {
 			if (import->classname && import->classname[0]) {
 				r_cons_printf (" classname=%s", import->classname);
 			}
-			r_cons_printf (" name=%s", escname);
+			r_cons_printf (" name=%s", symname);
 			if (import->descriptor && import->descriptor[0]) {
 				r_cons_printf (" descriptor=%s", import->descriptor);
 			}
 			r_cons_newline ();
 		}
 		free (symname);
-		free (escname);
 		i++;
 	}
 	if (IS_MODE_JSON (mode)) {
@@ -2044,6 +2042,9 @@ static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const c
 					if (!arch) arch = info->arch;
 					if (!bits) bits = info->bits;
 				}
+				if (!arch) {
+					arch = r_config_get (r->config, "asm.arch");
+				}
 				r_cons_printf ("Sa %s %d @ 0x%08"
 					PFMT64x"\n", arch, bits, addr);
 			}
@@ -2446,12 +2447,12 @@ static void bin_pe_versioninfo(RCore *r) {
 	const char *format_string = "%s/string%d";
 	r_cons_printf ("=== VS_VERSIONINFO ===\n\n");
 	do {
-		char path_version[256] = {0};
+		char path_version[256] = R_EMPTY;
 		snprintf (path_version, sizeof (path_version), format_version, num_version);
 		if (!(sdb = sdb_ns_path (r->sdb, path_version, 0)))
 			break;
 		r_cons_printf ("# VS_FIXEDFILEINFO\n\n");
-		char path_fixedfileinfo[256] = {0};
+		char path_fixedfileinfo[256] = R_EMPTY;
 		snprintf (path_fixedfileinfo, sizeof (path_fixedfileinfo), "%s/fixed_file_info", path_version);
 		if (!(sdb = sdb_ns_path (r->sdb, path_fixedfileinfo, 0)))
 			break;
@@ -2483,11 +2484,11 @@ static void bin_pe_versioninfo(RCore *r) {
 		r_cons_newline ();
 		r_cons_println ("# StringTable\n");
 		for (num_stringtable = 0; sdb; ++num_stringtable) {
-			char path_stringtable[256] = {0};
+			char path_stringtable[256] = R_EMPTY;
 			snprintf (path_stringtable, sizeof (path_stringtable), format_stringtable, path_version, num_stringtable);
 			sdb = sdb_ns_path (r->sdb, path_stringtable, 0);
 			for (num_string = 0; sdb; ++num_string) {
-				char path_string[256] = {0};
+				char path_string[256] = R_EMPTY;
 				snprintf (path_string, sizeof (path_string), format_string, path_stringtable, num_string);
 				sdb = sdb_ns_path (r->sdb, path_string, 0);
 				if (sdb) {
@@ -2518,7 +2519,7 @@ static void bin_pe_versioninfo(RCore *r) {
 
 static void bin_elf_versioninfo(RCore *r) {
 	const char *format = "bin/cur/info/versioninfo/%s%d";
-	char path[256] = {0};
+	char path[256] = R_EMPTY;
 	int num_versym = 0;
 	int num_verneed = 0;
 	int num_entry = 0;
@@ -2541,7 +2542,7 @@ static void bin_elf_versioninfo(RCore *r) {
 
 		do {
 			int num_val = 0;
-			char path_entry[256] = {0};
+			char path_entry[256] = R_EMPTY;
 			snprintf (path_entry, sizeof (path_entry), "%s/entry%d", path, num_entry++);
 			if (!(sdb = sdb_ns_path (r->sdb, path_entry, 0)))
 				break;
@@ -2550,7 +2551,7 @@ static void bin_elf_versioninfo(RCore *r) {
 			const char *value = NULL;
 
 			do {
-				char key[32] = {0};
+				char key[32] = R_EMPTY;
 				snprintf (key, sizeof (key), "value%d", num_val++);
 
 				if ((value = sdb_const_get (sdb, key, 0)))
@@ -2563,7 +2564,7 @@ static void bin_elf_versioninfo(RCore *r) {
 
 	do {
 		int num_version = 0;
-		char path_version[256] = {0};
+		char path_version[256] = R_EMPTY;
 		snprintf (path, sizeof (path), format, "verneed", num_verneed++);
 		if (!(sdb = sdb_ns_path (r->sdb, path, 0)))
 			break;
@@ -2580,7 +2581,7 @@ static void bin_elf_versioninfo(RCore *r) {
 		do {
 			snprintf (path_version, sizeof (path_version), "%s/version%d", path, num_version++);
 			const char *filename = NULL;
-			char path_vernaux[256] = {0};
+			char path_vernaux[256] = R_EMPTY;
 			int num_vernaux = 0;
 			if (!(sdb = sdb_ns_path (r->sdb, path_version, 0)))
 				break;

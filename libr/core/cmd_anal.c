@@ -552,7 +552,7 @@ static void cmd_syscall_do(RCore *core, int n) {
 }
 
 static void core_anal_bytes(RCore *core, const ut8 *buf, int len, int nops, int fmt) {
-	int stacksize = r_config_get_i (core->config, "esil.stacksize");
+	int stacksize = r_config_get_i (core->config, "esil.stack.depth");
 	bool iotrap = r_config_get_i (core->config, "esil.iotrap");
 	bool romem = r_config_get_i (core->config, "esil.romem");
 	bool stats = r_config_get_i (core->config, "esil.stats");
@@ -1193,8 +1193,12 @@ static bool setFunctionName(RCore *core, ut64 off, const char *name, bool prefix
 	if (!core || !name) {
 		return false;
 	}
+	const char *fcnpfx = r_config_get (core->config, "anal.fcnprefix");
+	if (!fcnpfx) {
+		fcnpfx = "fcn";
+	}
 	if (r_reg_get (core->anal->reg, name, -1)) {
-		name = r_str_newf ("fcn.%s", name);
+		name = r_str_newf ("%s.%s", fcnpfx, name);
 	}
 	fcn = r_anal_get_fcn_in (core->anal, off,
 				R_ANAL_FCN_TYPE_FCN | R_ANAL_FCN_TYPE_SYM | R_ANAL_FCN_TYPE_LOC);
@@ -1202,7 +1206,7 @@ static bool setFunctionName(RCore *core, ut64 off, const char *name, bool prefix
 		return false;
 	}
 	if (prefix && fcnNeedsPrefix (name)) {
-		nname = r_str_newf ("fcn.%s", name);
+		nname = r_str_newf ("%s.%s", fcnpfx, name);
 	} else {
 		nname = strdup (name);
 	}
@@ -2273,7 +2277,8 @@ void cmd_anal_reg(RCore *core, const char *str) {
 	}
 }
 
-R_API int r_core_esil_cmd(RAnalEsil *esil, const char *cmd, int a1, int a2);
+R_API bool r_core_esil_cmd(RAnalEsil *esil, const char *cmd, ut64 a1, ut64 a2);
+
 R_API int r_core_esil_step(RCore *core, ut64 until_addr, const char *until_expr) {
 	// Stepping
 	int ret;
@@ -2300,7 +2305,7 @@ repeat:
 		int stats = r_config_get_i (core->config, "esil.stats");
 		int iotrap = r_config_get_i (core->config, "esil.iotrap");
 		int exectrap = r_config_get_i (core->config, "esil.exectrap");
-		int stacksize = r_config_get_i (core->config, "esil.stacksize");
+		int stacksize = r_config_get_i (core->config, "esil.stack.depth");
 		int nonull = r_config_get_i (core->config, "esil.nonull");
 		if (!(core->anal->esil = r_anal_esil_new (stacksize, iotrap))) {
 			goto out_return_zero;
@@ -2592,6 +2597,9 @@ static void cmd_esil_mem(RCore *core, const char *input) {
 		return;
 	}
 
+addr = r_config_get_i (core->config, "esil.stack.addr");
+size = r_config_get_i (core->config, "esil.stack.size");
+
 	p = strncpy (nomalloc, input, 255);
 	if ((p = strchr (p, ' '))) {
 		while (*p == ' ') p++;
@@ -2627,7 +2635,7 @@ static void cmd_esil_mem(RCore *core, const char *input) {
 			}
 			r_flag_unset_name (core->flags, "aeim.fd");
 			r_flag_unset_name (core->flags, name);
-			eprintf ("Deinitialized %s\n", name);
+			// eprintf ("Deinitialized %s\n", name);
 			return;
 		}
 		eprintf ("Already initialized\n");
@@ -2680,8 +2688,8 @@ static void esil_init (RCore *core) {
 	}
 	if (!core->anal->esil) {
 		int iotrap = r_config_get_i (core->config, "esil.iotrap");
-		int stacksize = r_config_get_i (core->config, "esil.stacksize");
-		if (!(core->anal->esil = r_anal_esil_new (stacksize, iotrap))) {
+		ut64 stackSize = r_config_get_i (core->config, "esil.stack.size");
+		if (!(core->anal->esil = r_anal_esil_new (stackSize, iotrap))) {
 			R_FREE (regstate);
 			return;
 		}
@@ -2793,7 +2801,7 @@ static bool cmd_aea(RCore* core, int mode, ut64 addr, int length) {
 	ut64 addr_end;
 	AeaStats stats;
 	const char *esilstr;
-	RAnalOp aop = {0};
+	RAnalOp aop = R_EMPTY;
 	ut8 *buf;
 	RList* regnow;
 	if (!core)
@@ -2920,7 +2928,7 @@ static void cmd_anal_esil(RCore *core, const char *input) {
 		NULL };
 	RAnalEsil *esil = core->anal->esil;
 	ut64 addr = core->offset;
-	int stacksize = r_config_get_i (core->config, "esil.stacksize");
+	int stacksize = r_config_get_i (core->config, "esil.stack.depth");
 	int iotrap = r_config_get_i (core->config, "esil.iotrap");
 	int romem = r_config_get_i (core->config, "esil.romem");
 	int stats = r_config_get_i (core->config, "esil.stats");
@@ -3116,8 +3124,9 @@ static void cmd_anal_esil(RCore *core, const char *input) {
 					r_core_cmd0 (core, "ar PC=$$");
 				}
 			}
-			if (!(esil = core->anal->esil = r_anal_esil_new (stacksize, iotrap)))
+			if (!(esil = core->anal->esil = r_anal_esil_new (stacksize, iotrap))) {
 				return;
+			}
 			r_anal_esil_setup (esil, core->anal, romem, stats, nonull); // setup io
 			esil->verbose = (int)r_config_get_i (core->config, "esil.verbose");
 			/* restore user settings for interrupt handling */
@@ -3125,9 +3134,10 @@ static void cmd_anal_esil(RCore *core, const char *input) {
 				const char *s = r_config_get (core->config, "cmd.esil.intr");
 				if (s) {
 					char *my = strdup (s);
-					if (my)
+					if (my) {
 						r_config_set (core->config, "cmd.esil.intr", my);
-					free (my);
+						free (my);
+					}
 				}
 			}
 			break;
@@ -3280,7 +3290,7 @@ static void cmd_anal_esil(RCore *core, const char *input) {
 			r_core_set_asm_configs (core, new_arch, new_bits, segoff);
 		}
 		int ret, bufsz;
-		RAnalOp aop = {0};
+		RAnalOp aop = R_EMPTY;
 		bufsz = r_hex_str2bin (hex, (ut8*)hex);
 		ret = r_anal_op (core->anal, &aop, core->offset,
 			(const ut8*)hex, bufsz);
@@ -4751,7 +4761,7 @@ static void cmd_anal_trace(RCore *core, const char *input) {
 		break;
 	case 'e': // "ate"
 		if (!core->anal->esil) {
-			int stacksize = r_config_get_i (core->config, "esil.stacksize");
+			int stacksize = r_config_get_i (core->config, "esil.stack.depth");
 			int romem = r_config_get_i (core->config, "esil.romem");
 			int stats = r_config_get_i (core->config, "esil.stats");
 			int iotrap = r_config_get_i (core->config, "esil.iotrap");
@@ -5052,7 +5062,7 @@ static void r_core_anal_info (RCore *core, const char *input) {
 	}
 }
 
-extern int cmd_search_value_in_range(RCore *core, ut64 from, ut64 to, ut64 vmin, ut64 vmax, int vsize);
+extern int cmd_search_value_in_range(RCore *core, ut64 from, ut64 to, ut64 vmin, ut64 vmax, int vsize, bool asterisk);
 
 static void cmd_anal_aad(RCore *core, const char *input) {
 	RListIter *iter;
@@ -5119,7 +5129,7 @@ static void cmd_anal_aav(RCore *core, const char *input) {
 	if (core->assembler->bits == 64) {
 		vsize = 8;
 	}
-	(void)cmd_search_value_in_range (core, from, to, vmin, vmax, vsize);
+	(void)cmd_search_value_in_range (core, from, to, vmin, vmax, vsize, asterisk);
 	// TODO: for each hit . must set flag, xref and metadata Cd 4
 	if (asterisk) {
 		r_cons_printf ("f-hit*\n");
@@ -5127,6 +5137,15 @@ static void cmd_anal_aav(RCore *core, const char *input) {
 		r_core_cmd0 (core, "f-hit*");
 	}
 	seti ("search.align", o_align);
+}
+
+static bool should_aav(RCore *core) {
+	// Don't aav on x86 for now
+	if (r_str_startswith (r_config_get (core->config, "asm.arch"), "x86")) {
+		return false;
+	}
+
+	return true;
 }
 
 static int cmd_anal_all(RCore *core, const char *input) {
@@ -5191,7 +5210,6 @@ static int cmd_anal_all(RCore *core, const char *input) {
 		if (input[0] && (input[1] == '?' || (input[1] && input[2] == '?'))) {
 			eprintf ("Usage: See aa? for more help\n");
 		} else {
-			bool done_aav = false;
 			ut64 curseek = core->offset;
 			rowlog (core, "Analyze all flags starting with sym. and entry0 (aa)");
 			r_cons_break_push (NULL, NULL);
@@ -5214,9 +5232,8 @@ static int cmd_anal_all(RCore *core, const char *input) {
 					r_core_cmd0 (core, "dh esil");
 				}
 				int c = r_config_get_i (core->config, "anal.calls");
-				if (strstr (r_config_get (core->config, "asm.arch"), "arm")) {
+				if (should_aav (core)) {
 					rowlog (core, "\nAnalyze value pointers (aav)");
-					done_aav = true;
 					r_core_cmd0 (core, "aav");
 					if (r_cons_is_breaked ()) {
 						goto jacuzzi;
@@ -5250,12 +5267,6 @@ static int cmd_anal_all(RCore *core, const char *input) {
 					rowlog (core, "Analyze consecutive function (aat)");
 					r_core_cmd0 (core, "aat");
 					rowlog_done (core);
-					if (!done_aav) {
-						rowlog (core, "Analyze value pointers (aav)");
-						r_core_cmd0 (core, "aav");
-						r_core_cmd0 (core, "aav $S+$SS+1");
-						rowlog_done (core);
-					}
 				} else {
 					rowlog (core, "[*] Use -AA or aaaa to perform additional experimental analysis.\n");
 				}

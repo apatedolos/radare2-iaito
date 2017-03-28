@@ -675,7 +675,6 @@ static int cb_timezone(void *user, void *data) {
 }
 
 static int cb_cfgdebug(void *user, void *data) {
-	int ioraw = 1;
 	RCore *core = (RCore*) user;
 	RConfigNode *node = (RConfigNode*) data;
 	if (!core) return false;
@@ -704,15 +703,6 @@ static int cb_cfgdebug(void *user, void *data) {
 		if (core->dbg) r_debug_use (core->dbg, NULL);
 		core->bin->is_debugger = false;
 	}
-	if (core->io) {
-		r_config_set (core->config, "io.va", "true");
-		if (core->dbg && core->dbg->h) {
-			ioraw = core->dbg->h->keepio? 0: 1;
-		} else {
-			ioraw = 0;
-		}
-	}
-	r_config_set (core->config, "io.raw", ioraw? "true": "false");
 	return true;
 }
 
@@ -930,10 +920,10 @@ static int cb_esilverbose (void *user, void *data) {
 	return true;
 }
 
-static int cb_esilstacksize (void *user, void *data) {
+static int cb_esilstackdepth (void *user, void *data) {
 	RConfigNode *node = (RConfigNode*) data;
 	if (node->i_value < 3) {
-		eprintf ("esil.stacksize must be greater than 2\n");
+		eprintf ("esil.stack.depth must be greater than 2\n");
 		node->i_value = 32;
 	}
 	return true;
@@ -986,10 +976,10 @@ static int cb_hexcomments(void *user, void *data) {
 	return true;
 }
 
-R_API int r_core_esil_cmd(RAnalEsil *esil, const char *cmd, int a1, int a2) {
+R_API bool r_core_esil_cmd(RAnalEsil *esil, const char *cmd, ut64 a1, ut64 a2) {
 	if (cmd && *cmd) {
 		RCore *core = esil->anal->user;
-		r_core_cmdf (core, "%s %d %d", cmd, a1, a2);
+		r_core_cmdf (core, "%s %"PFMT64d" %" PFMT64d, cmd, a1, a2);
 		return true;
 	}
 	return false;
@@ -1001,6 +991,25 @@ static int cb_cmd_esil_intr(void *user, void *data) {
 	if (core && core->anal && core->anal->esil) {
 		core->anal->esil->cmd = r_core_esil_cmd;
 		core->anal->esil->cmd_intr = node->value;
+	}
+	return true;
+}
+
+static int cb_mdevrange(void *user, void *data) {
+	RCore *core = (RCore *) user;
+	RConfigNode *node = (RConfigNode *) data;
+	if (core && core->anal && core->anal->esil) {
+		core->anal->esil->mdev_range = node->value;
+	}
+	return true;
+}
+
+static int cb_cmd_esil_mdev(void *user, void *data) {
+	RCore *core = (RCore *) user;
+	RConfigNode *node = (RConfigNode *) data;
+	if (core && core->anal && core->anal->esil) {
+		core->anal->esil->cmd = r_core_esil_cmd;
+		core->anal->esil->cmd_mdev = node->value;
 	}
 	return true;
 }
@@ -1142,13 +1151,6 @@ static int cb_iopava(void *user, void *data) {
 	RCore *core = (RCore *) user;
 	RConfigNode *node = (RConfigNode *) data;
 	core->io->pava = node->i_value;
-	return true;
-}
-
-static int cb_ioraw(void *user, void *data) {
-	RCore *core = (RCore *) user;
-	RConfigNode *node = (RConfigNode *) data;
-	r_io_set_raw (core->io, node->i_value);
 	return true;
 }
 
@@ -1738,6 +1740,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETI("pdb.extract", 1, "Avoid extract of the pdb file, just download");
 
 	/* anal */
+	SETPREF("anal.fcnprefix", "fcn",  "Prefix new function names with this");
 	SETPREF("anal.a2f", "false",  "Use the new WIP analysis algorithm (core/p/a2f), anal.depth ignored atm");
 	SETICB("anal.gp", 0, (RConfigCallback)&cb_anal_gp, "Set the value of the GP register (MIPS)");
 	SETCB("anal.limits", "false", (RConfigCallback)&cb_anal_limits, "Restrict analysis to address range [anal.from:anal.to]");
@@ -1788,7 +1791,9 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF("esil.fillstack", "", "Initialize ESIL stack with (random, debrujn, sequence, zeros, ...)");
 	SETICB("esil.verbose", 0, &cb_esilverbose, "Show ESIL verbose level (0, 1, 2)");
 	SETICB("esil.gotolimit", core->anal->esil_goto_limit, &cb_gotolimit, "Maximum number of gotos per ESIL expression");
-	SETICB("esil.stacksize", 32, &cb_esilstacksize, "Number of elements that can be pushed on the esilstack");
+	SETICB("esil.stack.depth", 32, &cb_esilstackdepth, "Number of elements that can be pushed on the esilstack");
+	SETI("esil.stack.size", 0xf0000, "Number of elements that can be pushed on the esilstack");
+	SETI("esil.stack.addr", 0x100000, "Number of elements that can be pushed on the esilstack");
 
 	/* asm */
 	//asm.os needs to be first, since other asm.* depend on it
@@ -1939,9 +1944,9 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB("cfg.sandbox", "false", &cb_cfgsanbox, "Sandbox mode disables systems and open on upper directories");
 	SETPREF("cfg.wseek", "false", "Seek after write");
 	SETCB("cfg.bigendian", "false", &cb_bigendian, "Use little (false) or big (true) endianness");
-	SETI("zign.min", 2, "Minimum zignature length to filter in 'zg'");
-	SETI("zign.max", 500, "Maximum zignature length to filter in 'zg'");
-	SETPREF("zign.prefix", "sign", "Default prefix for signatures matches");
+	SETI("zign.min", 16, "Minimum zignature length");
+	SETI("zign.max", 500, "Maximum zignature length");
+	SETPREF("zign.prefix", "sign", "Default prefix for zignatures matches");
 
 	/* diff */
 	SETCB("diff.sort", "addr", &cb_diff_sort, "Specify function diff sorting column see (e diff.sort=?)");
@@ -2059,6 +2064,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF("cmd.visual", "", "Replace current print mode");
 	SETPREF("cmd.vprompt", "", "Visual prompt commands");
 
+	SETCB("cmd.esil.mdev", "", &cb_cmd_esil_mdev, "Command to run when memory device address is accessed");
 	SETCB("cmd.esil.intr", "", &cb_cmd_esil_intr, "Command to run when an esil interrupt happens");
 	SETCB("cmd.esil.trap", "", &cb_cmd_esil_trap, "Command to run when an esil trap happens");
 
@@ -2066,6 +2072,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB("fs.view", "normal", &cb_fsview, "Set visibility options for filesystems");
 
 	/* hexdump */
+	SETPREF("hex.header", "true", "Show header in hexdumps");
 	SETCB("hex.pairs", "true", &cb_hexpairs, "Show bytes paired in 'px' hexdump");
 	SETCB("hex.compact", "false", &cb_hexcompact, "Show smallest 16 byte col hexdump (60 columns)");
 	SETI("hex.flagsz", 0, "If non zero, overrides the flag size in pxa");
@@ -2151,6 +2158,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF("esil.romem", "false", "Set memory as read-only for ESIL");
 	SETPREF("esil.stats", "false", "Statistics from ESIL emulation stored in sdb");
 	SETPREF("esil.nonull", "false", "Prevent memory read, memory write at null pointer");
+	SETCB("esil.mdev.range", "", &cb_mdevrange, "Specify a range of memory to be handled by cmd.esil.mdev");
 
 	/* scr */
 #if __EMSCRIPTEN__
@@ -2247,7 +2255,6 @@ R_API int r_core_config_init(RCore *core) {
 	SETI("io.buffer.from", 0, "Lower address of buffered cache");
 	SETI("io.buffer.to", 0, "Higher address of buffered cache");
 	SETCB("io.cache", "false", &cb_iocache, "Enable cache for io changes");
-	SETCB("io.raw", "false", &cb_ioraw, "Ignore maps/sections and use raw io");
 	SETCB("io.ff", "true", &cb_ioff, "Fill invalid buffers with 0xff instead of returning error");
 	SETICB("io.0xff", 0xff, &cb_io_oxff, "Use this value instead of 0xff to fill unallocated areas");
 	SETCB("io.aslr", "false", &cb_ioaslr, "Disable ASLR for spawn and such");

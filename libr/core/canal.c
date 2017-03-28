@@ -458,6 +458,10 @@ static int core_anal_fcn(RCore *core, ut64 at, ut64 from, int reftype, int depth
 	ut64 *next = NULL;
 	int buflen, fcnlen;
 	RAnalFunction *fcn = r_anal_fcn_new ();
+	const char *fcnpfx = r_config_get (core->config, "anal.fcnprefix");
+	if (!fcnpfx) {
+		fcnpfx = "fcn";
+	}
 	if (!fcn) {
 		eprintf ("Error: new (fcn)\n");
 		return false;
@@ -476,7 +480,7 @@ static int core_anal_fcn(RCore *core, ut64 at, ut64 from, int reftype, int depth
 	if (fi && fi->name && strncmp (fi->name, "sect", 4)) {
 		fcn->name = strdup (fi->name);
 	} else {
-		fcn->name = r_str_newf ("fcn.%08"PFMT64x, at);
+		fcn->name = r_str_newf ("%s.%08"PFMT64x, fcnpfx, at);
 	}
 	buf = malloc (core->anal->opt.bb_max_size);
 	if (!buf) {
@@ -496,7 +500,7 @@ static int core_anal_fcn(RCore *core, ut64 at, ut64 from, int reftype, int depth
 		// real read.
 		// this is unnecessary if its contiguous
 		buflen = r_io_read_at (core->io, at+delta, buf, core->anal->opt.bb_max_size);
-		if (core->io->va && !core->io->raw) {
+		if (core->io->va) {
 			if (!r_io_is_valid_offset (core->io, at+delta, !core->anal->opt.noncode)) {
 				goto error;
 			}
@@ -553,7 +557,8 @@ static int core_anal_fcn(RCore *core, ut64 at, ut64 from, int reftype, int depth
 #endif
 				fcn->name = strdup (f->name);
 			} else {
-				fcn->name = r_str_newf ("fcn.%08"PFMT64x, fcn->addr);
+
+				fcn->name = r_str_newf ("%s.%08"PFMT64x, fcnpfx, fcn->addr);
 			}
 		}
 		if (fcnlen == R_ANAL_RET_ERROR ||
@@ -572,8 +577,11 @@ static int core_anal_fcn(RCore *core, ut64 at, ut64 from, int reftype, int depth
 				if (f && *f->name && strncmp (f->name, "sect", 4)) {
 					fcn->name = strdup (f->name);
 				} else {
-					fcn->name = r_str_newf ("%s.%08"PFMT64x,
-						r_anal_fcn_type_tostring (fcn->type), fcn->addr);
+					const char *fcnpfx = fcnpfx = r_anal_fcn_type_tostring (fcn->type);
+					if (!fcnpfx || !*fcnpfx || !strcmp (fcnpfx, "fcn")) {
+						fcnpfx = r_config_get (core->config, "anal.fcnprefix");
+					}
+					fcn->name = r_str_newf ("%s.%08"PFMT64x, fcnpfx, fcn->addr);
 				}
 				/* Add flag */
 				r_flag_space_push (core->flags, "functions");
@@ -1319,7 +1327,7 @@ R_API int r_core_anal_fcn(RCore *core, ut64 at, ut64 from, int reftype, int dept
 	r_anal_build_range_on_hints (core->anal);
 	r_core_seek_archbits (core, at);
 
-	if (core->io->va && !core->io->raw) {
+	if (core->io->va) {
 		if (!r_io_is_valid_offset (core->io, at, !core->anal->opt.noncode)) {
 			return false;
 		}
@@ -1434,7 +1442,7 @@ R_API int r_core_anal_fcn_clean(RCore *core, ut64 addr) {
 #define FMT_GV 1
 #define FMT_JS 2
 R_API void r_core_anal_coderefs(RCore *core, ut64 addr, int fmt) {
-	RAnalFunction fakefr = {0};
+	RAnalFunction fakefr = R_EMPTY;
 	const char *font = r_config_get (core->config, "graph.font");
 	const char *format = r_config_get (core->config, "graph.format");
 	int is_html = r_cons_singleton ()->is_html;
@@ -2408,7 +2416,7 @@ R_API int r_core_anal_search(RCore *core, ut64 from, ut64 to, ut64 ref) {
 	ut8 *buf = (ut8 *)malloc (core->blocksize);
 	int ptrdepth = r_config_get_i (core->config, "anal.ptrdepth");
 	int ret, i, count = 0;
-	RAnalOp op = {0};
+	RAnalOp op = R_EMPTY;
 	ut64 at;
 	char bckwrds, do_bckwrd_srch;
 	// TODO: get current section range here or gtfo
@@ -3354,7 +3362,7 @@ static void getpcfromstack(RCore *core, RAnalEsil *esil) {
 	ut64 size;
 	int idx;
 	RAnalEsil esil_cpy;
-	RAnalOp op = {0};
+	RAnalOp op = R_EMPTY;
 	RAnalFunction *fcn = NULL;
 	ut8 *buf = NULL;
 	char *tmp_esil_str = NULL;
@@ -3464,7 +3472,7 @@ R_API void r_core_anal_esil(RCore *core, const char *str, const char *target) {
 #if 0
 	RAsmOp asmop;
 #endif
-	RAnalOp op = {0};
+	RAnalOp op = R_EMPTY;
 	ut8 *buf = NULL;
 	bool end_address_set = false;
 	int i, iend;
@@ -3614,10 +3622,7 @@ R_API void r_core_anal_esil(RCore *core, const char *str, const char *target) {
 					if (core->anal->cur && strcmp (core->anal->cur->arch, "arm")) {
 						if (cfg_anal_strings) {
 							if (CHECKREF (ESIL->cur)) {
-								r_anal_ref_add (core->anal, ESIL->cur, cur, 'd');
-								if ((target && ESIL->cur == ntarget) || !target) {
-									add_string_ref (core, ESIL->cur);
-								}
+								r_anal_ref_add (core->anal, ESIL->cur, cur, 's');
 							}
 						}
 					}

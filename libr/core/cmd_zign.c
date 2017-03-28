@@ -7,10 +7,12 @@
 #include <r_cons.h>
 #include <r_util.h>
 
-static bool addFcnBytes(RCore *core, RAnalFunction *fcn, int type, int minzlen, int maxzlen) {
+static bool addFcnBytes(RCore *core, RAnalFunction *fcn, const char *name, int type, int minzlen, int maxzlen) {
 	int fcnlen = 0, len = 0;
 	ut8 *buf = NULL, *mask = NULL;
+	char *zigname = NULL;
 	bool retval = true;
+	int curspace = core->anal->zign_spaces.space_idx;
 
 	fcnlen = r_anal_fcn_realsize (fcn);
 
@@ -31,20 +33,30 @@ static bool addFcnBytes(RCore *core, RAnalFunction *fcn, int type, int minzlen, 
 		goto exit_function;
 	}
 
+	if (name) {
+		zigname = r_str_new (name);
+	} else {
+		if (curspace != -1) {
+			zigname = r_str_newf ("%s.", core->anal->zign_spaces.spaces[curspace]);
+		}
+		zigname = r_str_appendf (zigname, "%c.%s", type, fcn->name);
+	}
+
 	switch (type) {
 	case R_SIGN_EXACT:
 		mask = malloc (len);
 		memset (mask, 0xff, len);
-		retval = r_sign_add_exact (core->anal, fcn->name, len, buf, mask);
+		retval = r_sign_add_exact (core->anal, zigname, len, buf, mask);
 		break;
 	case R_SIGN_ANAL:
-		retval = r_sign_add_anal (core->anal, fcn->name, len, buf);
+		retval = r_sign_add_anal (core->anal, zigname, len, buf);
 		break;
 	}
 
 exit_function:
 	free (buf);
 	free (mask);
+	free (zigname);
 
 	return retval;
 }
@@ -92,7 +104,7 @@ static int cmdAddBytes(void *data, const char *input, int type) {
 			bool retval = true;
 
 			args = r_str_new (input + 1);
-			n = r_str_word_set0(args);
+			n = r_str_word_set0 (args);
 
 			if (n != 2) {
 				eprintf ("usage: za%s name bytes\n", type == R_SIGN_ANAL? "a": "e");
@@ -100,8 +112,8 @@ static int cmdAddBytes(void *data, const char *input, int type) {
 				goto exit_case;
 			}
 
-			name = r_str_word_get0(args, 0);
-			hexbytes = r_str_word_get0(args, 1);
+			name = r_str_word_get0 (args, 0);
+			hexbytes = r_str_word_get0 (args, 1);
 
 			if (!addHex (core, name, type, hexbytes)) {
 				eprintf ("error: cannot add zignature\n");
@@ -118,30 +130,47 @@ exit_case:
 		{
 			RAnalFunction *fcni = NULL;
 			RListIter *iter = NULL;
-			const char *name = NULL;
+			const char *name = NULL, *zigname = NULL;
+			char *args = NULL;
 			int minzlen = r_config_get_i (core->config, "zign.min");
 			int maxzlen = r_config_get_i (core->config, "zign.max");
+			int n = 0;
+			bool retval = true;
 
-			if (input[1] != ' ') {
-				eprintf ("usage: za%sf name\n", type == R_SIGN_ANAL? "a": "e");
-				return false;
+			args = r_str_new (r_str_trim_const (input + 1));
+			n = r_str_word_set0 (args);
+
+			if (n > 2) {
+				eprintf ("usage: za%sf [name] [zigname]\n", type == R_SIGN_ANAL? "a": "e");
+				retval = false;
+				goto exit_case_fcn;
 			}
 
-			name = input + 2;
+			switch (n) {
+			case 2:
+				zigname = r_str_word_get0 (args, 1);
+			case 1:
+				name = r_str_word_get0 (args, 0);
+			}
 
 			r_cons_break_push (NULL, NULL);
 			r_list_foreach (core->anal->fcns, iter, fcni) {
 				if (r_cons_is_breaked ()) {
 					break;
 				}
-				if (!strcmp (name, fcni->name)) {
-					if (!addFcnBytes (core, fcni, type, minzlen, maxzlen)) {
+				if ((!name && core->offset == fcni->addr) ||
+					(name && !strcmp (name, fcni->name))) {
+					if (!addFcnBytes (core, fcni, zigname, type, minzlen, maxzlen)) {
 						eprintf ("error: could not add zignature for fcn %s\n", fcni->name);
 					}
 					break;
 				}
 			}
 			r_cons_break_pop ();
+
+exit_case_fcn:
+			free (args);
+			return retval;
 		}
 		break;
 	case 'F':
@@ -150,17 +179,21 @@ exit_case:
 			RListIter *iter = NULL;
 			int minzlen = r_config_get_i (core->config, "zign.min");
 			int maxzlen = r_config_get_i (core->config, "zign.max");
+			int count = 0;
 
 			r_cons_break_push (NULL, NULL);
 			r_list_foreach (core->anal->fcns, iter, fcni) {
 				if (r_cons_is_breaked ()) {
 					break;
 				}
-				if (!addFcnBytes (core, fcni, type, minzlen, maxzlen)) {
+				if (!addFcnBytes (core, fcni, NULL, type, minzlen, maxzlen)) {
 					eprintf ("error: could not add zignature for fcn %s\n", fcni->name);
+					continue;
 				}
+				count++;
 			}
 			r_cons_break_pop ();
+			eprintf ("generated zignatures: %d\n", count);
 		}
 		break;
 	case '?':
@@ -169,7 +202,7 @@ exit_case:
 				const char *help_msg[] = {
 					"Usage:", "zaa[fF] [args] ", "# Create anal zignature",
 					"zaa ", "name bytes", "create anal zignature",
-					"zaaf ", "[name]", "create anal zignature for function",
+					"zaaf ", "[name] [zigname]", "create anal zignature for function",
 					"zaaF ", "", "generate anal zignatures for all functions",
 					NULL};
 				r_core_cmd_help (core, help_msg);
@@ -177,7 +210,7 @@ exit_case:
 				const char *help_msg[] = {
 					"Usage:", "zae[fF] [args] ", "# Create anal zignature",
 					"zae ", "name bytes", "create anal zignature",
-					"zaef ", "[name]", "create anal zignature for function",
+					"zaef ", "[name] [zigname]", "create anal zignature for function",
 					"zaeF ", "", "generate anal zignatures for all functions",
 					NULL};
 				r_core_cmd_help (core, help_msg);
@@ -192,18 +225,30 @@ exit_case:
 	return true;
 }
 
-static bool addFcnMetrics(RCore *core, RAnalFunction *fcn) {
+static bool addFcnMetrics(RCore *core, RAnalFunction *fcn, const char *name) {
 	RSignMetrics metrics;
+	char *zigname = NULL;
+	bool retval = true;
+	int curspace = core->anal->zign_spaces.space_idx;
 
 	metrics.cc = r_anal_fcn_cc (fcn);
 	metrics.nbbs = r_list_length (fcn->bbs);
 	metrics.edges = r_anal_fcn_count_edges (fcn, &metrics.ebbs);
 
-	if (!r_sign_add_metric (core->anal, fcn->name, metrics)) {
-		return false;
+	if (name) {
+		zigname = r_str_new (name);
+	} else {
+		if (curspace != -1) {
+			zigname = r_str_newf ("%s.", core->anal->zign_spaces.spaces[curspace]);
+		}
+		zigname = r_str_appendf (zigname, "%c.%s", R_SIGN_METRIC, fcn->name);
 	}
 
-	return true;
+	retval = r_sign_add_metric (core->anal, zigname, metrics);
+
+	free (zigname);
+
+	return retval;
 }
 
 static bool parseMetricArgs(const char *args0, int nargs, RSignMetrics *metrics) {
@@ -217,7 +262,7 @@ static bool parseMetricArgs(const char *args0, int nargs, RSignMetrics *metrics)
 	metrics->ebbs = -1;
 
 	for (i = 0; i < nargs; i++) {
-		ptr = r_str_word_get0(args0, i);
+		ptr = r_str_word_get0 (args0, i);
 		if (r_str_startswith (ptr, "cc=")) {
 			metrics->cc = atoi (ptr + 3);
 		} else if (r_str_startswith (ptr, "nbbs=")) {
@@ -248,7 +293,7 @@ static int cmdAddMetric(void *data, const char *input) {
 			bool retval = true;
 
 			args = r_str_new (input + 1);
-			n = r_str_word_set0(args);
+			n = r_str_word_set0 (args);
 
 			if (n < 2) {
 				eprintf ("usage: zam name metrics\n");
@@ -256,8 +301,8 @@ static int cmdAddMetric(void *data, const char *input) {
 				goto exit_case;
 			}
 
-			name = r_str_word_get0(args, 0);
-			args0 = r_str_word_get0(args, 1);
+			name = r_str_word_get0 (args, 0);
+			args0 = r_str_word_get0 (args, 1);
 
 			if (!parseMetricArgs (args0, n - 1, &metrics)) {
 				eprintf ("error: invalid arguments\n");
@@ -280,53 +325,87 @@ exit_case:
 		{
 			RAnalFunction *fcni = NULL;
 			RListIter *iter = NULL;
-			const char *name = NULL;
+			const char *name = NULL, *zigname = NULL;
+			char *args = NULL;
+			int n = 0;
+			bool retval = true;
 
-			if (input[1] != ' ') {
-				eprintf ("usage: zamf name\n");
-				return false;
+			args = r_str_new (r_str_trim_const (input + 1));
+			n = r_str_word_set0 (args);
+
+			if (n > 2) {
+				eprintf ("usage: zamf [name] [zigname]\n");
+				retval = false;
+				goto exit_case_fcn;
 			}
 
-			name = input + 2;
+			switch (n) {
+			case 2:
+				zigname = r_str_word_get0 (args, 1);
+			case 1:
+				name = r_str_word_get0 (args, 0);
+			}
 
 			r_cons_break_push (NULL, NULL);
 			r_list_foreach (core->anal->fcns, iter, fcni) {
 				if (r_cons_is_breaked ()) {
 					break;
 				}
-				if (!strcmp (name, fcni->name)) {
-					if (!addFcnMetrics (core, fcni)) {
+				if ((!name && core->offset == fcni->addr) ||
+					(name && !strcmp (name, fcni->name))) {
+					if (!addFcnMetrics (core, fcni, zigname)) {
 						eprintf ("error: could not add zignature for fcn %s\n", fcni->name);
 					}
 					break;
 				}
 			}
 			r_cons_break_pop ();
+
+exit_case_fcn:
+			free (args);
+			return retval;
 		}
 		break;
 	case 'F':
 		{
 			RAnalFunction *fcni = NULL;
 			RListIter *iter = NULL;
+			int count = 0;
 
 			r_cons_break_push (NULL, NULL);
 			r_list_foreach (core->anal->fcns, iter, fcni) {
 				if (r_cons_is_breaked ()) {
 					break;
 				}
-				if (!addFcnMetrics (core, fcni)) {
+				if (!addFcnMetrics (core, fcni, NULL)) {
 					eprintf ("error: could not add zignature for fcn %s\n", fcni->name);
+					continue;
 				}
+				count++;
 			}
 			r_cons_break_pop ();
+			eprintf ("generated zignatures: %d\n", count);
 		}
 		break;
 	case '?':
-		{
+		if (input[1] == '?') {
 			const char *help_msg[] = {
-				"Usage:", "zam[fF] [args] ", "# Create metric zignature",
+				"Examples:", "Metric Zignatures", " examples and documentation",
+				"cc", "", "cyclomatic complexity",
+				"edges", "", "number of edges",
+				"nbbs", "", "number of basic blocks",
+				"ebbs ", "", "number of end basic blocks",
+				NULL};
+			r_core_cmd_help (core, help_msg);
+			r_cons_printf ("Examples:\n"
+				" zam foo cc=2 nbbs=3 edges=3 ebbs=1\n"
+				" zam bar nbbs=3 edges=3\n");
+		} else {
+			const char *help_msg[] = {
+				"Usage:", "zam[fF?] [args] ", "# Create metric zignature",
+				"zam?? ", "", "show metrics help",
 				"zam ", "name metrics", "create metric zignature",
-				"zamf ", "[name]", "create metric zignature for function",
+				"zamf ", "[name] [zigname]", "create metric zignature for function",
 				"zamF ", "", "generate metric zignatures for all functions",
 				NULL};
 			r_core_cmd_help (core, help_msg);
@@ -356,7 +435,7 @@ static int cmdAdd(void *data, const char *input) {
 				"Usage:", "za[aemg] [args] ", "# Add zignature",
 				"zaa", "[?]", "add anal zignature",
 				"zae", "[?]", "add exact-match zignature",
-				"zam ", "name metrics", "add metric zignature (e.g. zm foo bbs=10 calls=printf,exit)",
+				"zam", "[?]", "add metric zignature",
 				NULL};
 			r_core_cmd_help (core, help_msg);
 		}
@@ -367,6 +446,55 @@ static int cmdAdd(void *data, const char *input) {
 	}
 
 	return true;
+}
+
+static bool loadGzSdb(RAnal *a, const char *filename) {
+	ut8 *buf = NULL;
+	int size = 0;
+	char *tmpfile = NULL;
+	bool retval = true;
+
+	if (!r_file_exists (filename)) {
+		eprintf ("error: file %s does not exist\n", filename);
+		retval = false;
+		goto exit_function;
+	}
+
+	if (!(buf = r_file_gzslurp (filename, &size, 0))) {
+		eprintf ("error: cannot decompress file\n");
+		retval = false;
+		goto exit_function;
+	}
+
+	if (!(tmpfile = r_file_temp ("r2zign"))) {
+		eprintf ("error: cannot create temp file\n");
+		retval = false;
+		goto exit_function;
+	}
+
+	if (!r_file_dump (tmpfile, buf, size, 0)) {
+		eprintf ("error: cannot dump file\n");
+		retval = false;
+		goto exit_function;
+	}
+
+	if (!r_sign_load (a, tmpfile)) {
+		eprintf ("error: cannot load file\n");
+		retval = false;
+		goto exit_function;
+	}
+
+	if (!r_file_rm (tmpfile)) {
+		eprintf ("error: cannot delete temp file\n");
+		retval = false;
+		goto exit_function;
+	}
+
+exit_function:
+	free (buf);
+	free (tmpfile);
+
+	return retval;
 }
 
 static int cmdFile(void *data, const char *input) {
@@ -381,7 +509,7 @@ static int cmdFile(void *data, const char *input) {
 				filename = input + 1;
 				return r_sign_load (core->anal, filename);
 			} else {
-				eprintf ("Usage: zo filename\n");
+				eprintf ("usage: zo filename\n");
 				return false;
 			}
 		}
@@ -394,23 +522,38 @@ static int cmdFile(void *data, const char *input) {
 				filename = input + 2;
 				return r_sign_save (core->anal, filename);
 			} else {
-				eprintf ("Usage: zos filename\n");
+				eprintf ("usage: zos filename\n");
 				return false;
 			}
+		}
+		break;
+	case 'z':
+		{
+			const char *filename = NULL;
+
+			if (input[1] == ' ' && input[2] != '\x00') {
+				filename = input + 2;
+			} else {
+				eprintf ("usage: zoz filename\n");
+				return false;
+			}
+
+			return loadGzSdb (core->anal, filename);
 		}
 		break;
 	case '?':
 		{
 			const char *help_msg[] = {
-				"Usage:", "zo[s] filename ", "# Manage zignature files",
+				"Usage:", "zo[zs] filename ", "# Manage zignature files",
 				"zo ", "filename", "load zinatures from sdb file",
+				"zoz ", "filename", "load zinatures from gzipped sdb file",
 				"zos ", "filename", "save zignatures to sdb file",
 				NULL};
 			r_core_cmd_help (core, help_msg);
 		}
 		break;
 	default:
-		eprintf ("usage: zo[s] filename\n");
+		eprintf ("usage: zo[zs] filename\n");
 		return false;
 	}
 
@@ -426,7 +569,7 @@ static int cmdSpace(void *data, const char *input) {
 		if (input[1] != '\x00') {
 			r_space_push (zs, input + 1);
 		} else {
-			eprintf ("Usage: zs+zignspace\n");
+			eprintf ("usage: zs+zignspace\n");
 			return false;
 		}
 		break;
@@ -434,7 +577,7 @@ static int cmdSpace(void *data, const char *input) {
 		if (input[1] == ' ' && input[2] != '\x00') {
 			r_space_rename (zs, NULL, input + 2);
 		} else {
-			eprintf ("Usage: zsr newname\n");
+			eprintf ("usage: zsr newname\n");
 			return false;
 		}
 		break;
@@ -456,7 +599,7 @@ static int cmdSpace(void *data, const char *input) {
 		if (input[1] != '\x00') {
 			r_space_set (zs, input + 1);
 		} else {
-			eprintf ("Usage: zs zignspace\n");
+			eprintf ("usage: zs zignspace\n");
 			return false;
 		}
 		break;
@@ -548,12 +691,7 @@ static void addFlag(RCore *core, RSignItem *it, ut64 addr, int size, int count, 
 	const char *zign_prefix = r_config_get (core->config, "zign.prefix");
 	char *name;
 
-	if (it->space == -1) {
-		name = r_str_newf ("%s.%c.%s_%d", zign_prefix, it->type, it->name, count);
-	} else {
-		name = r_str_newf ("%s.%s.%c.%s_%d", zign_prefix, core->anal->zign_spaces.spaces[it->space],
-			it->type, it->name, count);
-	}
+	name = r_str_newf ("%s.%s_%d", zign_prefix, it->name, count);
 
 	if (rad) {
 		r_cons_printf ("f %s %d @ 0x%08"PFMT64x"\n", name, size, addr);

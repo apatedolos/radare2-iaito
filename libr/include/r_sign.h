@@ -32,12 +32,12 @@ typedef struct r_sign_item_t {
 	int space;
 	int type;
 
-	/* exact/anal zigns*/
+	// exact/anal zigns
 	int size;
 	ut8 *bytes;
 	ut8 *mask;
 
-	/* metric zigns */
+	// metric zigns
 	RSignMetrics metrics;
 } RSignItem;
 
@@ -58,9 +58,6 @@ R_API bool r_sign_add_anal(RAnal *a, const char *name, ut64 size, const ut8 *byt
 R_API bool r_sign_add_metric(RAnal *a, const char *name, RSignMetrics metrics);
 R_API bool r_sign_delete(RAnal *a, const char *name);
 R_API void r_sign_list(RAnal *a, int format);
-
-R_API int r_sign_space_count_for(RAnal *a, int idx);
-R_API void r_sign_space_unset_for(RAnal *a, int idx);
 
 R_API bool r_sign_foreach(RAnal *a, RSignForeachCallback cb, void *user);
 
